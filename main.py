@@ -12,11 +12,11 @@ from tokenizer import RWKV_TOKENIZER
 from sampler import sample_logits
 
 if __name__ == '__main__':
-    mindspore.set_device("CPU")
+    mindspore.set_device("Ascend")
     mindspore.run_check()
 
     args = {
-        'MODEL_NAME': '/mnt/e/Resources/Models/rwkv-6-world/RWKV-x060-World-1B6-v2.1-20240328-ctx4096', #模型文件的名字，pth结尾的权重文件。
+        'MODEL_NAME': '/home/Eliwii_Keeya/mnt/.ek/RWKV-x070-World-0.1B-v2.8-20241210-ctx4096', #模型文件的名字，pth结尾的权重文件。
         'vocab_size': 65536, #词表大小
         'batch_size': 1,
     }
@@ -47,6 +47,10 @@ if __name__ == '__main__':
         out = model(token_sampled)
         token_sampled = sample_logits(out, TEMPERATURE, TOP_P).type_as(token)
         token = ops.cat((token, token_sampled.unsqueeze(1)), 1)
+        decoded_sequences = tokenizer.decode(token.tolist())
+        for i, seq in enumerate(decoded_sequences):
+            print(f"Batch {i+1}: {seq}")
+            print()
     end_time = time.time() # 结束计时
 
     # 打印结果

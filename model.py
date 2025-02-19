@@ -24,10 +24,11 @@ class RWKV_BLOCK(nn.Module):
     """
     def __init__(self, block_w: dict, n_embd: int, n_head: int, state: mindspore.Tensor, i: int):
         super().__init__()
+        self.layer_id = i
+        self.head_size = 64
         self.n_embd = n_embd
-        self.n_head = n_head
-        self.head_size = n_embd // n_head
-
+        self.n_head = self.n_embd // self.head_size
+        
         # 时间状态索引
         i0 = (2 + self.head_size) * i + 0
         i1 = (2 + self.head_size) * i + 1
@@ -48,21 +49,33 @@ class RWKV_BLOCK(nn.Module):
         self.ln2.bias = nn.Parameter(block_w['ln2.bias'])
 
         # 初始化激活函数
+        self.relu = nn.ReLU()
         self.silu = nn.SiLU()
+        self.sigmoid = nn.Sigmoid()
+        self.softplus = nn.Softplus()
         
         # 初始化注意力参数
-        self.att_time_maa_x = nn.Parameter(block_w['att.time_maa_x'])
-        self.att_time_maa = nn.Parameter(ops.stack([block_w['att.time_maa_w'],
-                                                           block_w['att.time_maa_k'],
-                                                           block_w['att.time_maa_v'],
-                                                           block_w['att.time_maa_r'],
-                                                           block_w['att.time_maa_g']]))
-        self.att_time_maa_w1 = nn.Parameter(block_w['att.time_maa_w1'])
-        self.att_time_maa_w2 = nn.Parameter(block_w['att.time_maa_w2'])
-        self.att_time_decay = nn.Parameter(block_w['att.time_decay'])
-        self.att_time_decay_w1 = nn.Parameter(block_w['att.time_decay_w1'])
-        self.att_time_decay_w2 = nn.Parameter(block_w['att.time_decay_w2'])
-        self.att_time_faaaa = nn.Parameter(block_w['att.time_faaaa'])
+        self.x = nn.Parameter(ops.stack([block_w['att.x_r'],
+                                        block_w['att.x_w'],
+                                        block_w['att.x_k'],
+                                        block_w['att.x_v'],
+                                        block_w['att.x_a'],
+                                        block_w['att.x_g']]))
+        self.w0 = nn.Parameter(block_w['att.w0'])
+        self.r_k = nn.Parameter(block_w['att.r_k'])
+        self.w1 = nn.Parameter(block_w['att.w1'])
+        self.w2 = nn.Parameter(block_w['att.w2'])
+        self.a1 = nn.Parameter(block_w['att.a1'])
+        self.a2 = nn.Parameter(block_w['att.a2'])
+        self.a0 = nn.Parameter(block_w['att.a0'])
+        self.g1 = nn.Parameter(block_w['att.g1'])
+        self.g2 = nn.Parameter(block_w['att.g2'])
+        if self.layer_id != 0:
+            self.v2 = nn.Parameter(block_w['att.v2'])
+            self.v1 = nn.Parameter(block_w['att.v1'])
+            self.v0 = nn.Parameter(block_w['att.v0'])
+        self.k_k = nn.Parameter(block_w['att.k_k'])
+        self.k_a = nn.Parameter(block_w['att.k_a'])
         self.att_receptance = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.att_receptance.weight = nn.Parameter(block_w['att.receptance.weight'])
         self.att_key = nn.Linear(self.n_embd, self.n_embd, bias=False)
@@ -70,20 +83,15 @@ class RWKV_BLOCK(nn.Module):
         self.att_value = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.att_value.weight = nn.Parameter(block_w['att.value.weight'])
         self.att_output = nn.Linear(self.n_embd, self.n_embd, bias=False)
-        self.att_output.weight = nn.Parameter(block_w['att.output.weight'])
-        self.att_gate = nn.Linear(self.n_embd, self.n_embd, bias=False)
-        self.att_gate.weight = nn.Parameter(block_w['att.gate.weight'])
-        self.att_group_norm = nn.GroupNorm(num_groups=n_head, num_channels=n_embd, eps=1e-5, affine=True)
+        self.att_output.weight = nn.Parameter(block_w['att.output.weight'])        
+        self.att_group_norm = nn.GroupNorm(num_groups=n_head, num_channels=n_embd, eps=64e-5, affine=True)
         self.att_group_norm.weight = nn.Parameter(block_w['att.ln_x.weight'])
         self.att_group_norm.bias = nn.Parameter(block_w['att.ln_x.bias'])
             
         # 初始化前馈参数
-        self.ffn_time_maa_k = nn.Parameter(block_w['ffn.time_maa_k'])
-        self.ffn_time_maa_r = nn.Parameter(block_w['ffn.time_maa_r'])
+        self.x_k = nn.Parameter(block_w['ffn.x_k'])
         self.ffn_key = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.ffn_key.weight = nn.Parameter(block_w['ffn.key.weight'])
-        self.ffn_receptance = nn.Linear(self.n_embd, self.n_embd, bias=False)
-        self.ffn_receptance.weight = nn.Parameter(block_w['ffn.receptance.weight'])
         self.ffn_value = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.ffn_value.weight = nn.Parameter(block_w['ffn.value.weight'])
 
@@ -98,14 +106,13 @@ class RWKV_BLOCK(nn.Module):
         """
         sx = self.state_view_channel - x
         self.state_view_channel = x
-        xk = x + sx * self.ffn_time_maa_k
-        xr = x + sx * self.ffn_time_maa_r
-        r = nn.functional.sigmoid(self.ffn_receptance(xr))
-        k = nn.functional.relu(self.ffn_key(xk)).pow(2)
-        output = r * self.ffn_value(k)
-        return output
+        
+        xk = x + sx * self.x_k
+        k = self.relu(self.ffn_key(xk)).pow(2)
 
-    def time_mixing(self, x: mindspore.Tensor) -> mindspore.Tensor:
+        return self.ffn_value(k)
+
+    def time_mixing(self, x: mindspore.Tensor, v_first: mindspore.Tensor) -> mindspore.Tensor:
         """
         时间混合函数。
 
@@ -119,37 +126,45 @@ class RWKV_BLOCK(nn.Module):
         sx = (self.state_view_time_1 - x)
         self.state_view_time_1 = x
 
-        xxx = x + sx * self.att_time_maa_x
-        xxx = ops.tanh(xxx @ self.att_time_maa_w1).view(batch_size, 5, 1, -1)
-        xxx = ops.matmul(xxx, self.att_time_maa_w2).view(batch_size, 5, -1)
+        xr, xw, xk, xv, xa, xg = ops.unbind(x.unsqueeze(1) + sx.unsqueeze(1) * self.x, dim=1)
 
-        xw, xk, xv, xr, xg = ops.unbind(x.unsqueeze(1) + sx.unsqueeze(1) * (self.att_time_maa + xxx), dim=1)
-
-        w = (self.att_time_decay + (ops.tanh(xw @ self.att_time_decay_w1) @ self.att_time_decay_w2))
-        
-        # 计算注意力机制的权重
-        w = ops.exp(-ops.exp(w.view(batch_size, H, S, 1)))
+        # 计算注意力机制的权重    
+        w = self.w0 + ops.tanh(xw @ self.w1) @ self.w2
+        w = -self.softplus(-w.view(batch_size, H, 1, S)) - 0.5
 
         # 计算注意力机制的组件
-        r = self.att_receptance(xr).view(batch_size, H, 1, S)
-        k = self.att_key(xk).view(batch_size, H, S, 1)
-        v = self.att_value(xv).view(batch_size, H, 1, S)
-        g = self.silu(self.att_gate(xg))
+        r = self.att_receptance(xr).view(batch_size, H, S, 1)
+        k = self.att_key(xk)
+        v = self.att_value(xv)
+        if self.layer_id == 0:
+            v_first = v.copy() # 存储第一层的v
+        else:
+            v = v + (v_first - v) * ops.sigmoid(self.v0 + (xv @ self.v1) @ self.v2)
+        v = v.view(batch_size, H, S, 1)
+        a = self.sigmoid(self.a0 + (xa @ self.a1) @ self.a2)
+        g = self.sigmoid(xg @ self.g1) @ self.g2
+
+        kk = k * self.k_k
+        kk = nn.functional.normalize(kk.view(batch_size, H, S), dim=-1, p=2.0).view(batch_size, -1)
+        k = (k * (1 + (a-1) * self.k_a)).view(batch_size, H, 1, S)
 
         # 使用注意力机制更新状态
+        vk = v @ k
+        ab = (-kk).view(batch_size, H, S, 1) @ (kk * a).view(batch_size, H, 1, S)
         s = self.state_view_time_2.view(batch_size, H, S, S)
-        a = k @ v
-        x = r @ (self.att_time_faaaa * a + s)
-        s = a + w * s
-        self.state_view_time_2 = s.view(batch_size, S, -1)
+        s = s * w + s @ ab.float() + vk.float()
+        # self.state_view_time_2 = s.view(batch_size, S, -1)
+        x = s @ r
 
         # 展平x并应用组归一化和门控
-        x = self.att_group_norm(x.flatten(start_dim=1)) * g
+        x = self.att_group_norm(x.flatten(start_dim=1))
+        rkv = (r.squeeze(-1) * k.squeeze(-2) * self.r_k).sum(dim=-1, keepdim=True) * v.squeeze(-1)
+        x = (x + rkv.view(batch_size, H * S)) * g
 
         # 应用输出层并返回结果
         return self.att_output(x)
 
-    def forward(self, x: mindspore.Tensor) -> mindspore.Tensor:
+    def forward(self, x: mindspore.Tensor, v_first: mindspore.Tensor) -> mindspore.Tensor:
         """
         模型的前向传播。
         Args:
@@ -157,7 +172,7 @@ class RWKV_BLOCK(nn.Module):
         Returns:
             mindspore.Tensor: 前向传播结果张量，形状与输入的x相同。
         """
-        x = x + self.time_mixing(self.ln1(x))
+        x = x + self.time_mixing(self.ln1(x), v_first)
         x = x + self.channel_mixing(self.ln2(x))
         return x
         
@@ -181,29 +196,37 @@ class RWKV_RNN(nn.Module):
         self.num_layer = 0
         for k in w.keys():
             w[k] = w[k].float()
-            if '.time_' in k: w[k] = w[k].squeeze()
-            if '.time_faaaa' in k: w[k] = w[k].unsqueeze(-1)
+            if '.x_' in k: w[k] = w[k].squeeze()
+            if '.k_' in k: w[k] = w[k].squeeze()
+            if 'att.r' in k: w[k] = w[k].squeeze()
+            if 'att.w' in k: w[k] = w[k].squeeze()
+            if 'att.v0' in k: w[k] = w[k].squeeze()
+            if 'att.v1' in k: w[k] = w[k].squeeze()
+            if 'att.v2' in k: w[k] = w[k].squeeze()
+            if 'att.a' in k: w[k] = w[k].squeeze()
+            if 'att.g' in k: w[k] = w[k].squeeze()
             if "blocks" in k: self.num_layer = max(self.num_layer, int(k.split(".")[1]))
         
         self.num_layer += 1
 
-        self.n_head = w['blocks.0.att.time_faaaa'].shape[0]
+        self.head_size = 64
         self.n_embd = w['blocks.0.ln1.weight'].shape[0]
-        self.head_size = self.n_embd // self.n_head
+        self.n_head = self.n_embd // self.head_size
         self.state_size = [self.num_layer * (2 + self.head_size), self.n_embd]
         self.batch_size = args['batch_size']
 
         print(f"state_size: {self.state_size}") # 这里打印状态的形状
         
-        # 初始化模型参数        
+        # 初始化模型参数
         self.emb = nn.Embedding.from_pretrained(w['emb.weight'], freeze=True)
         self.ln0 = nn.LayerNorm(self.n_embd)
         self.ln0.weight = nn.Parameter(w['blocks.0.ln0.weight'])
         self.ln0.bias = nn.Parameter(w['blocks.0.ln0.bias'])
         self.blocks = nn.ModuleList()
 
-        # 初始化状态
+        # 初始化参数
         self.state = ops.zeros([self.batch_size, *self.state_size])
+        self.v_first = ops.zeros([self.batch_size, self.n_embd])
         
         for i in range(self.num_layer):
             # 提取当前块的权重
@@ -229,7 +252,7 @@ class RWKV_RNN(nn.Module):
         x = self.emb(token)
         x = self.ln0(x)
         for block in self.blocks:
-            x = block(x)
+            x = block(x, self.v_first)
         x = self.ln_out(x)
         x = self.head(x)
         return x
