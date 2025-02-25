@@ -19,21 +19,25 @@ class RWKV_BLOCK(nn.Module):
         block_w (dict): 权重字典。
         n_embd (int): 嵌入维度。
         n_head (int): 头数。
-        state (mindspore.Tensor): 隐藏状态张量。[Batch_size, State_size, N_embd]
+        state (mindspore.Tensor): 隐藏状态张量。[Batch_size, State_size, N_embd]。
+        v_first: 第一层的值。
         i (int): 时间索引。
     """
-    def __init__(self, block_w: dict, n_embd: int, n_head: int, state: mindspore.Tensor, i: int):
+    def __init__(self, block_w: dict, n_embd: int, n_head: int, state: mindspore.Tensor, v_first: mindspore.Tensor, i: int):
         super().__init__()
         self.layer_id = i
         self.head_size = 64
         self.n_embd = n_embd
-        self.n_head = self.n_embd // self.head_size
+        self.n_head = n_head
         
         # 时间状态索引
         i0 = (2 + self.head_size) * i + 0
         i1 = (2 + self.head_size) * i + 1
         i2 = (2 + self.head_size) * i + 2
         i3 = (2 + self.head_size) * (i + 1)
+
+        # 初始化第一层的值
+        self.v_first = v_first
 
         # 初始化时间状态视图
         self.state_view_channel = state[:, i0]
@@ -100,7 +104,7 @@ class RWKV_BLOCK(nn.Module):
         通道混合函数。
 
         Args:
-            x (mindspore.Tensor): 输入张量，形状为[Batch, 2048]。
+            x (mindspore.Tensor): 输入张量，形状为[Batch, N_embd]。
         Returns:
             mindspore.Tensor: 混合后的张量，形状与输入的x相同。
         """
@@ -117,7 +121,7 @@ class RWKV_BLOCK(nn.Module):
         时间混合函数。
 
         Args:
-            x (mindspore.Tensor): 输入张量，形状为[Batch, 2048]。
+            x (mindspore.Tensor): 输入张量，形状为[Batch, N_embd]。
         Returns:
             mindspore.Tensor: 混合后的时间状态张量，形状与输入的state相同。
         """
@@ -153,7 +157,7 @@ class RWKV_BLOCK(nn.Module):
         ab = (-kk).view(batch_size, H, S, 1) @ (kk * a).view(batch_size, H, 1, S)
         s = self.state_view_time_2.view(batch_size, H, S, S)
         s = s * w + s @ ab.float() + vk.float()
-        # self.state_view_time_2 = s.view(batch_size, S, -1)
+        self.state_view_time_2 = s.view(batch_size, S, -1)
         x = s @ r
 
         # 展平x并应用组归一化和门控
@@ -162,7 +166,7 @@ class RWKV_BLOCK(nn.Module):
         x = (x + rkv.view(batch_size, H * S)) * g
 
         # 应用输出层并返回结果
-        return self.att_output(x)
+        return self.att_output(x), v_first
 
     def forward(self, x: mindspore.Tensor, v_first: mindspore.Tensor) -> mindspore.Tensor:
         """
@@ -172,9 +176,10 @@ class RWKV_BLOCK(nn.Module):
         Returns:
             mindspore.Tensor: 前向传播结果张量，形状与输入的x相同。
         """
-        x = x + self.time_mixing(self.ln1(x), v_first)
+        xx, v_first = self.time_mixing(self.ln1(x), v_first)
+        x = x + xx
         x = x + self.channel_mixing(self.ln2(x))
-        return x
+        return x, v_first
         
 
 class RWKV_RNN(nn.Module):
@@ -210,8 +215,8 @@ class RWKV_RNN(nn.Module):
         self.num_layer += 1
 
         self.head_size = 64
-        self.n_embd = w['blocks.0.ln1.weight'].shape[0]
-        self.n_head = self.n_embd // self.head_size
+        self.n_head = w['blocks.0.att.r_k'].shape[0]
+        self.n_embd = self.n_head * self.head_size
         self.state_size = [self.num_layer * (2 + self.head_size), self.n_embd]
         self.batch_size = args['batch_size']
 
@@ -231,7 +236,7 @@ class RWKV_RNN(nn.Module):
         for i in range(self.num_layer):
             # 提取当前块的权重
             block_w = {k[len(f'blocks.{i}.'):]: v for k, v in w.items() if f'blocks.{i}.' in k}
-            self.blocks.append(RWKV_BLOCK(block_w, self.n_embd, self.n_head, self.state, i))
+            self.blocks.append(RWKV_BLOCK(block_w, self.n_embd, self.n_head, self.state, self.v_first, i))
             print(f"Loading blocks...[{i + 1}/{self.num_layer}]", end='\r')
         print()
 
@@ -252,7 +257,7 @@ class RWKV_RNN(nn.Module):
         x = self.emb(token)
         x = self.ln0(x)
         for block in self.blocks:
-            x = block(x, self.v_first)
+            x, self.v_first = block(x, self.v_first)
         x = self.ln_out(x)
         x = self.head(x)
         return x
