@@ -56,7 +56,6 @@ class RWKV_BLOCK(nn.Module):
         self.relu = nn.ReLU()
         self.silu = nn.SiLU()
         self.sigmoid = nn.Sigmoid()
-        self.softplus = nn.Softplus()
         
         # 初始化注意力参数
         self.x = nn.Parameter(ops.stack([block_w['att.x_r'],
@@ -134,7 +133,7 @@ class RWKV_BLOCK(nn.Module):
 
         # 计算注意力机制的权重    
         w = self.w0 + ops.tanh(xw @ self.w1) @ self.w2
-        w = -self.softplus(-w.view(batch_size, H, 1, S)) - 0.5
+        w = ops.exp(-0.606531 * self.sigmoid(w)).view(batch_size, H, 1, S)
 
         # 计算注意力机制的组件
         r = self.att_receptance(xr).view(batch_size, H, S, 1)
