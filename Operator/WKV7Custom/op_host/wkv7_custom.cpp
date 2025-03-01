@@ -6,7 +6,6 @@
 namespace optiling {
 static ge::graphStatus TilingFunc(gert::TilingContext* context)
 {
-
   WKV7CustomTilingData tiling;
   const gert::StorageShape* x1_shape = context->GetInputShape(0);
   int32_t data_sz = 1;
@@ -19,7 +18,7 @@ static ge::graphStatus TilingFunc(gert::TilingContext* context)
 
   return ge::GRAPH_SUCCESS;
 }
-}
+} // namespace optiling
 
 
 namespace ge {
@@ -30,7 +29,7 @@ static ge::graphStatus InferShape(gert::InferShapeContext* context)
     *y_shape = *x1_shape;
     return GRAPH_SUCCESS;
 }
-}
+} // namespace ge
 
 
 namespace ops {
@@ -84,9 +83,8 @@ public:
 
         this->SetInferShape(ge::InferShape);
 
-        this->AICore()
-            .SetTiling(optiling::TilingFunc);
-        this->AICore().AddConfig("ascend910");
+        this->AICore().SetTiling(optiling::TilingFunc);
+        this->AICore().AddConfig("ascend910b");
 
     }
 };
