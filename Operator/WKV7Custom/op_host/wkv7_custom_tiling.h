@@ -1,7 +1,15 @@
+/****************************************************************************************************
+ * File				: wkv7_custom_tiling.h
+ * Date				: 2025-03-02 17:59:27
+ * Author			: Eliwii_Keeya
+ * Description		: wkv7自定义算子host侧头文件
+ * Last Modified	: 2025-03-02 17:59:27
+ ****************************************************************************************************/
 #ifndef WKV7_CUSTOM_TILING_H
 #define WKV7_CUSTOM_TILING_H
 #include "register/tilingdata_base.h"
 #include "tiling/tiling_api.h"
+#include "tiling/platform/platform_ascendc.h"
 
 namespace optiling
 {
