@@ -1,4 +1,10 @@
-
+/****************************************************************************************************
+ * File				: wkv7_custom.cpp
+ * Date				: 2025-03-01 19:49:45
+ * Author			: Eliwii_Keeya
+ * Description		: wkv7自定义算子host侧源文件
+ * Last Modified	: 2025-03-01 19:49:45
+ ****************************************************************************************************/
 #include "wkv7_custom_tiling.h"
 #include "register/op_def_registry.h"
 
@@ -73,6 +79,11 @@ public:
             .Format({ge::FORMAT_ND})
             .UnknownShapeFormat({ge::FORMAT_ND});
         this->Output("x")
+            .ParamType(REQUIRED)
+            .DataType({ge::DT_FLOAT})
+            .Format({ge::FORMAT_ND})
+            .UnknownShapeFormat({ge::FORMAT_ND});
+        this->Output("s_ref")
             .ParamType(REQUIRED)
             .DataType({ge::DT_FLOAT})
             .Format({ge::FORMAT_ND})

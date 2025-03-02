@@ -2,7 +2,7 @@
  * File				: wkv7_custom.cpp
  * Date				: 2025-03-01 19:49:45
  * Author			: Eliwii_Keeya
- * Description		: wkv7自定义算子host侧源文件
+ * Description		: wkv7自定义算子kernel侧源文件
  * Last Modified	: 2025-03-01 19:49:45
  ****************************************************************************************************/
 #include "kernel_operator.h"
@@ -24,7 +24,7 @@ public:
     }
 
     // 初始化函数，完成内存初始化相关操作
-    __aicore__ inline void Init(GM_ADDR s, GM_ADDR r, GM_ADDR w, GM_ADDR k, GM_ADDR v, GM_ADDR a, GM_ADDR b, GM_ADDR x, uint32_t totalLength, uint32_t tileNum)
+    __aicore__ inline void Init(GM_ADDR s, GM_ADDR r, GM_ADDR w, GM_ADDR k, GM_ADDR v, GM_ADDR a, GM_ADDR b, GM_ADDR x, GM_ADDR s_ref, uint32_t totalLength, uint32_t tileNum)
     {
         // 使用获取到的TilingData计算得到singleCoreSize(每个核上总计算数据大小)、tileNum（每个核上分块个数）、singleTileLength（每个分块大小）等变量
         this->blockLength = totalLength / AscendC::GetBlockNum();
@@ -43,6 +43,7 @@ public:
         aGm.SetGlobalBuffer((__gm__ DTYPE_A*)a + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);
         bGm.SetGlobalBuffer((__gm__ DTYPE_B*)b + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);
         xGm.SetGlobalBuffer((__gm__ DTYPE_X*)x + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);
+        sRefGm.SetGlobalBuffer((__gm__ DTYPE_S*)s_ref + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);
         // 通过Pipe内存管理对象为输入输出Queue分配内存
         pipe.InitBuffer(inQueueS, BUFFER_NUM, this->tileLength * sizeof(DTYPE_S));
         pipe.InitBuffer(inQueueR, BUFFER_NUM, this->tileLength * sizeof(DTYPE_R));
@@ -52,6 +53,7 @@ public:
         pipe.InitBuffer(inQueueA, BUFFER_NUM, this->tileLength * sizeof(DTYPE_A));
         pipe.InitBuffer(inQueueB, BUFFER_NUM, this->tileLength * sizeof(DTYPE_B));
         pipe.InitBuffer(outQueueX, BUFFER_NUM, this->tileLength * sizeof(DTYPE_X));
+        pipe.InitBuffer(outQueueS, BUFFER_NUM, this->tileLength * sizeof(DTYPE_S));
     }
 
     // 核心处理函数，实现算子逻辑，调用私有成员函数CopyIn、Split、Compute、Aggregate、CopyOut完成矢量算子的三级流水操作
@@ -119,10 +121,13 @@ private:
     {
         // 从VecOut的Queue中取出输出Tensor
         AscendC::LocalTensor<DTYPE_X> xLocal = outQueueX.DeQue<DTYPE_X>();
+        AscendC::LocalTensor<DTYPE_S> sLocal = outQueueS.DeQue<DTYPE_S>();
         // 将输出Tensor拷贝到GlobalTensor中
         AscendC::DataCopy(xGm[progress * this->tileLength], xLocal, this->tileLength);
+        AscendC::DataCopy(sRefGm[progress * this->tileLength], sLocal, this->tileLength);
         // 将不再使用的LocalTensor释放
         outQueueX.FreeTensor(xLocal);
+        outQueueX.FreeTensor(sLocal);
     }
 
 
@@ -132,7 +137,7 @@ private:
     //输入数据Queue队列管理对象，QuePosition为VECIN
     AscendC::TQue<AscendC::QuePosition::VECIN, BUFFER_NUM> inQueueS, inQueueR, inQueueW, inQueueK, inQueueV, inQueueA, inQueueB; 
     //输出数据Queue队列管理对象，QuePosition为VECOUT
-    AscendC::TQue<AscendC::QuePosition::VECOUT, BUFFER_NUM> outQueueX;
+    AscendC::TQue<AscendC::QuePosition::VECOUT, BUFFER_NUM> outQueueX, outQueueS;
     //管理输入输出Global Memory内存地址的对象
     AscendC::GlobalTensor<DTYPE_S> sGm;
     AscendC::GlobalTensor<DTYPE_R> rGm;
@@ -142,6 +147,7 @@ private:
     AscendC::GlobalTensor<DTYPE_A> aGm;
     AscendC::GlobalTensor<DTYPE_B> bGm;
     AscendC::GlobalTensor<DTYPE_X> xGm;
+    AscendC::GlobalTensor<DTYPE_S> sRefGm;
     
     uint32_t blockLength;   // 每个核上总计算数据大小
     uint32_t tileNum;       // 每个核上总计算数据分块个数
@@ -152,8 +158,8 @@ private:
 };
 
 
-extern "C" __global__ __aicore__ void wkv7_custom(GM_ADDR s, GM_ADDR r, GM_ADDR w, GM_ADDR k, GM_ADDR v, GM_ADDR a, GM_ADDR b, GM_ADDR x, GM_ADDR workspace, GM_ADDR tiling) {
+extern "C" __global__ __aicore__ void wkv7_custom(GM_ADDR s, GM_ADDR r, GM_ADDR w, GM_ADDR k, GM_ADDR v, GM_ADDR a, GM_ADDR b, GM_ADDR x, GM_ADDR s_ref, GM_ADDR workspace, GM_ADDR tiling) {
     GET_TILING_DATA(tiling_data, tiling);
     KernelWKV7 op;
-    op.Init(s, r, w, k, v, a, b, x, tiling_data.totalLength, tiling_data.tileNum);
+    op.Init(s, r, w, k, v, a, b, x, s_ref, tiling_data.totalLength, tiling_data.tileNum);
 }

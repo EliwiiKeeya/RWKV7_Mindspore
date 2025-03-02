@@ -83,6 +83,16 @@
                 "type": [
                     "float32"
                 ]
+            },
+            {
+                "name": "s_ref",
+                "param_type": "required",
+                "format":[
+                    "ND"
+                ],
+                "type":[
+                    "float32"
+                ]
             }
         ],
         "attr":[
