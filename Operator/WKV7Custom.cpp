@@ -8,10 +8,10 @@
 #include "data_utils.h"
 #ifndef ASCENDC_CPU_DEBUG
 #include "acl/acl.h"
-extern void add_custom_do(uint32_t blockDim, void *stream, uint8_t *x, uint8_t *y, uint8_t *z);
+extern void wkv7_custom_do(uint32_t blockDim, void* l2ctrl, void *stream, uint8_t *x, uint8_t *y, uint8_t *z);
 #else
 #include "tikicpulib.h"
-extern "C" __global__ __aicore__ void add_custom(GM_ADDR x, GM_ADDR y, GM_ADDR z);
+extern "C" __global__ __aicore__ void add_customwkv7_custom(GM_ADDR s, GM_ADDR r, GM_ADDR w, GM_ADDR k, GM_ADDR v, GM_ADDR a, GM_ADDR kk, GM_ADDR x, GM_ADDR s_ref);
 #endif
 
 int32_t main(int32_t argc, char *argv[])
@@ -21,21 +21,39 @@ int32_t main(int32_t argc, char *argv[])
     size_t outputByteSize = 8 * 2048 * sizeof(uint16_t);
 
 #ifdef ASCENDC_CPU_DEBUG
+    uint8_t *s = (uint8_t *)AscendC::GmAlloc(inputByteSize);
+    uint8_t *r = (uint8_t *)AscendC::GmAlloc(inputByteSize);
+    uint8_t *w = (uint8_t *)AscendC::GmAlloc(inputByteSize);
+    uint8_t *k = (uint8_t *)AscendC::GmAlloc(inputByteSize);
+    uint8_t *v = (uint8_t *)AscendC::GmAlloc(inputByteSize);
+    uint8_t *a = (uint8_t *)AscendC::GmAlloc(inputByteSize);
+    uint8_t *kk = (uint8_t *)AscendC::GmAlloc(inputByteSize);
     uint8_t *x = (uint8_t *)AscendC::GmAlloc(inputByteSize);
-    uint8_t *y = (uint8_t *)AscendC::GmAlloc(inputByteSize);
-    uint8_t *z = (uint8_t *)AscendC::GmAlloc(outputByteSize);
-
-    ReadFile("./input/input_x.bin", inputByteSize, x, inputByteSize);
-    ReadFile("./input/input_y.bin", inputByteSize, y, inputByteSize);
+    uint8_t *s_ref = (uint8_t *)AscendC::GmAlloc(outputByteSize);
+    
+    ReadFile("./input/input_r.bin", inputByteSize, r, inputByteSize);
+    ReadFile("./input/input_w.bin", inputByteSize, w, inputByteSize);
+    ReadFile("./input/input_k.bin", inputByteSize, k, inputByteSize);
+    ReadFile("./input/input_v.bin", inputByteSize, v, inputByteSize);
+    ReadFile("./input/input_a.bin", inputByteSize, a, inputByteSize);
+    ReadFile("./input/input_kk.bin", inputByteSize, kk, inputByteSize);
+    ReadFile("./input/input_x.bin", inputByteSize, x, outputByteSize);
+    ReadFile("./input/input_s_ref.bin", inputByteSize, s_ref, outputByteSize);
 
     AscendC::SetKernelMode(KernelMode::AIV_MODE);
-    ICPU_RUN_KF(add_custom, blockDim, x, y, z); // use this macro for cpu debug
+    ICPU_RUN_KF(wkv7_custom, blockDim, r, w, k, v, a, kk, x, s_ref); // use this macro for cpu debug
 
-    WriteFile("./output/output_z.bin", z, outputByteSize);
+    WriteFile("./output/output_x.bin", x, outputByteSize);
+    WriteFile("./output/output_s_ref.bin", s_ref, outputByteSize);
 
+    AscendC::GmFree((void *)r);
+    AscendC::GmFree((void *)w);
+    AscendC::GmFree((void *)k);
+    AscendC::GmFree((void *)v);
+    AscendC::GmFree((void *)a);
+    AscendC::GmFree((void *)kk);
     AscendC::GmFree((void *)x);
-    AscendC::GmFree((void *)y);
-    AscendC::GmFree((void *)z);
+    AscendC::GmFree((void *)s_ref);
 #else
     CHECK_ACL(aclInit(nullptr));
     int32_t deviceId = 0;
