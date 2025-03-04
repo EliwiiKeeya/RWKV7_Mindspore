@@ -6,9 +6,8 @@
  * Last Modified	: 2025-03-01 19:49:45
  ****************************************************************************************************/
 #include "kernel_operator.h"
-#include <cstdint>
 
-#define GM_ADDR __gm__ uint8_t*
+#define GM_ADDR_T __gm__ uint8_t
 
 constexpr int32_t TOTAL_LENGTH = 8 * 2048;                            // total length of data
 constexpr int32_t USE_CORE_NUM = 8;                                   // num of core used
@@ -24,6 +23,9 @@ public:
 
 
 private:
+    // 中间变量
+    GM_ADDR_T *ab_, *b_ , *sw_, *sab_, *vk_;
+
     // Pipe内存管理对象
     AscendC::TPipe tPipeObj;
 
@@ -31,35 +33,36 @@ private:
     // TCubeTiling tCubeTilingData;
 
     // Matmul对象
-    // using M_DTYPE_V = MatmulType<AscendC::TPosition::GM, CubeFormat::ND, DTYPE_V>;
-    // using M_DTYPE_K = MatmulType<AscendC::TPosition::GM, CubeFormat::ND, DTYPE_K>;
-    // using M_DTYPE_VK = MatmulType<AscendC::TPosition::GM, CubeFormat::ND, DTYPE_V>;
+    // using M_DTYPE_V = MatmulType<AscendC::TPosition::GM, CubeFormat::ND, float>;
+    // using M_DTYPE_K = MatmulType<AscendC::TPosition::GM, CubeFormat::ND, float>;
+    // using M_DTYPE_VK = MatmulType<AscendC::TPosition::GM, CubeFormat::ND, float>;
     // Matmul<M_DTYPE_V, M_DTYPE_K,  M_DTYPE_VK> matmulObjVK;
 
     // Vector 输入数据 Queue队列管理对象，QuePosition为VECIN
-    AscendC::TQue<AscendC::QuePosition::VECIN, BUFFER_NUM> inQueueS, inQueueR, inQueueW, inQueueK, inQueueV, inQueueA, inQueueKK; 
+    AscendC::TQue<AscendC::QuePosition::VECIN, BUFFER_NUM> inQueueS, inQueueR, inQueueW, inQueueK, inQueueV, inQueueA, inQueueKK;
+    AscendC::TQue<AscendC::QuePosition::VECIN, BUFFER_NUM> inQueueB, inQueueAB, inQueueSW, inQueueSAB, inQueueVK;
 
     // Vector 输出数据Queue队列管理对象，QuePosition为VECOUT
     AscendC::TQue<AscendC::QuePosition::VECOUT, BUFFER_NUM> outQueueX, outQueueS;
 
     //管理输入输出Global Memory内存地址的对象
-    AscendC::GlobalTensor<DTYPE_S> sGm;
-    AscendC::GlobalTensor<DTYPE_R> rGm;
-    AscendC::GlobalTensor<DTYPE_W> wGm;
-    AscendC::GlobalTensor<DTYPE_K> kGm;
-    AscendC::GlobalTensor<DTYPE_V> vGm;
-    AscendC::GlobalTensor<DTYPE_A> aGm;
-    AscendC::GlobalTensor<DTYPE_KK> kkGM;
+    AscendC::GlobalTensor<float> sGm;
+    AscendC::GlobalTensor<float> rGm;
+    AscendC::GlobalTensor<float> wGm;
+    AscendC::GlobalTensor<float> kGm;
+    AscendC::GlobalTensor<float> vGm;
+    AscendC::GlobalTensor<float> aGm;
+    AscendC::GlobalTensor<float> kkGM;
 
-    AscendC::GlobalTensor<DTYPE_X> xGm;
-    AscendC::GlobalTensor<DTYPE_S> sRefGm;
-    AscendC::GlobalTensor<DTYPE_S> workspaceGm;
+    AscendC::GlobalTensor<float> xGm;
+    AscendC::GlobalTensor<float> sRefGm;
+    AscendC::GlobalTensor<float> workspaceGm;
 
-    AscendC::GlobalTensor<DTYPE_A> abGm;
-    AscendC::GlobalTensor<DTYPE_A> bGm;
-    AscendC::GlobalTensor<DTYPE_S> swGm;
-    AscendC::GlobalTensor<DTYPE_S> sabGm;
-    AscendC::GlobalTensor<DTYPE_V> vkGm;
+    AscendC::GlobalTensor<float> abGm;
+    AscendC::GlobalTensor<float> bGm;
+    AscendC::GlobalTensor<float> swGm;
+    AscendC::GlobalTensor<float> sabGm;
+    AscendC::GlobalTensor<float> vkGm;
     
     uint32_t blockLength;   // 每个核上总计算数据大小
     uint32_t tileNum;       // 每个核上总计算数据分块个数
@@ -108,133 +111,133 @@ public:
         // this->S = head_size;
         
         // 获取当前核的起始索引
-        sGm.SetGlobalBuffer((__gm__ DTYPE_S*)s + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);
-        rGm.SetGlobalBuffer((__gm__ DTYPE_R*)r + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);
-        wGm.SetGlobalBuffer((__gm__ DTYPE_W*)w + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);
-        kGm.SetGlobalBuffer((__gm__ DTYPE_K*)k + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);        
-        vGm.SetGlobalBuffer((__gm__ DTYPE_V*)v + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);
-        aGm.SetGlobalBuffer((__gm__ DTYPE_A*)a + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);
-        kkGM.SetGlobalBuffer((__gm__ DTYPE_KK*)kk + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);
+        sGm.SetGlobalBuffer((__gm__ float*)s + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);
+        rGm.SetGlobalBuffer((__gm__ float*)r + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);
+        wGm.SetGlobalBuffer((__gm__ float*)w + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);
+        kGm.SetGlobalBuffer((__gm__ float*)k + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);        
+        vGm.SetGlobalBuffer((__gm__ float*)v + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);
+        aGm.SetGlobalBuffer((__gm__ float*)a + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);
+        kkGM.SetGlobalBuffer((__gm__ float*)kk + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);
         
-        xGm.SetGlobalBuffer((__gm__ DTYPE_X*)x + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);
-        sRefGm.SetGlobalBuffer((__gm__ DTYPE_S*)s_ref + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);
-        workspaceGm.SetGlobalBuffer((__gm__ DTYPE_S*)workspace + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);
+        xGm.SetGlobalBuffer((__gm__ float*)x + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);
+        sRefGm.SetGlobalBuffer((__gm__ float*)s_ref + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);
+        // workspaceGm.SetGlobalBuffer((__gm__ float*)workspace + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);
 
-        abGm.SetGlobalBuffer((__gm__ DTYPE_A*)ab + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);
-        bGm.SetGlobalBuffer((__gm__ DTYPE_A*)b + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);
-        swGm.SetGlobalBuffer((__gm__ DTYPE_S*)sw + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);
-        sabGm.SetGlobalBuffer((__gm__ DTYPE_S*)sab + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);
-        vkGm.SetGlobalBuffer((__gm__ DTYPE_V*)vk + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);
+        abGm.SetGlobalBuffer((__gm__ float*)this->ab_ + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);
+        bGm.SetGlobalBuffer((__gm__ float*)this->b_ + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);
+        swGm.SetGlobalBuffer((__gm__ float*)this->sw_ + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);
+        sabGm.SetGlobalBuffer((__gm__ float*)this->sab_ + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);
+        vkGm.SetGlobalBuffer((__gm__ float*)this->vk_ + this->blockLength * AscendC::GetBlockIdx(), this->blockLength);
 
         // 通过Pipe内存管理对象为输入输出Queue分配内存
-        tPipeObj.InitBuffer(inQueueS,  BUFFER_NUM, this->tileLength * sizeof(DTYPE_S));
-        tPipeObj.InitBuffer(inQueueR,  BUFFER_NUM, this->tileLength * sizeof(DTYPE_R));
-        tPipeObj.InitBuffer(inQueueW,  BUFFER_NUM, this->tileLength * sizeof(DTYPE_W));
-        tPipeObj.InitBuffer(inQueueK,  BUFFER_NUM, this->tileLength * sizeof(DTYPE_K));
-        tPipeObj.InitBuffer(inQueueV,  BUFFER_NUM, this->tileLength * sizeof(DTYPE_V));
-        tPipeObj.InitBuffer(inQueueA,  BUFFER_NUM, this->tileLength * sizeof(DTYPE_A));
-        tPipeObj.InitBuffer(inQueueKK, BUFFER_NUM, this->tileLength * sizeof(DTYPE_KK));
+        tPipeObj.InitBuffer(inQueueS,  BUFFER_NUM, this->tileLength * sizeof(float));
+        tPipeObj.InitBuffer(inQueueR,  BUFFER_NUM, this->tileLength * sizeof(float));
+        tPipeObj.InitBuffer(inQueueW,  BUFFER_NUM, this->tileLength * sizeof(float));
+        tPipeObj.InitBuffer(inQueueK,  BUFFER_NUM, this->tileLength * sizeof(float));
+        tPipeObj.InitBuffer(inQueueV,  BUFFER_NUM, this->tileLength * sizeof(float));
+        tPipeObj.InitBuffer(inQueueA,  BUFFER_NUM, this->tileLength * sizeof(float));
+        tPipeObj.InitBuffer(inQueueKK, BUFFER_NUM, this->tileLength * sizeof(float));
         
-        tPipeObj.InitBuffer(inQueueB,   BUFFER_NUM, this->tileLength * sizeof(DTYPE_A));    // b   = a * kk
-        tPipeObj.InitBuffer(inQueueAB,  BUFFER_NUM, this->tileLength * sizeof(DTYPE_A));	// ab  = a @ b
-        tPipeObj.InitBuffer(inQueueSW,  BUFFER_NUM, this->tileLength * sizeof(DTYPE_S));    // sw  = s * w
-        tPipeObj.InitBuffer(inQueueSAB, BUFFER_NUM, this->tileLength * sizeof(DTYPE_S));    // sab = s @ ab
-        tPipeObj.InitBuffer(inQueueVK,  BUFFER_NUM, this->tileLength * sizeof(DTYPE_V));    // vk  = v @ k
+        tPipeObj.InitBuffer(inQueueB,   BUFFER_NUM, this->tileLength * sizeof(float));    // b   = a * kk
+        tPipeObj.InitBuffer(inQueueAB,  BUFFER_NUM, this->tileLength * sizeof(float));	// ab  = a @ b
+        tPipeObj.InitBuffer(inQueueSW,  BUFFER_NUM, this->tileLength * sizeof(float));    // sw  = s * w
+        tPipeObj.InitBuffer(inQueueSAB, BUFFER_NUM, this->tileLength * sizeof(float));    // sab = s @ ab
+        tPipeObj.InitBuffer(inQueueVK,  BUFFER_NUM, this->tileLength * sizeof(float));    // vk  = v @ k
 
-        tPipeObj.InitBuffer(outQueueX, BUFFER_NUM, this->tileLength * sizeof(DTYPE_X));
-        tPipeObj.InitBuffer(outQueueS, BUFFER_NUM, this->tileLength * sizeof(DTYPE_S));
+        tPipeObj.InitBuffer(outQueueX, BUFFER_NUM, this->tileLength * sizeof(float));
+        tPipeObj.InitBuffer(outQueueS, BUFFER_NUM, this->tileLength * sizeof(float));
     }
 
     // 核心处理函数，实现算子逻辑
     __aicore__ inline void Process()
     {
-		int32_t loopCount = this->tileNum * BUFFER_NUM;
+        int32_t loopCount = this->tileNum * BUFFER_NUM;
         for (uint32_t computeRound = 0; computeRound < loopCount; computeRound++)
-		{
+        {
             CopyIn(computeRound);	// s, r, w, k, v, a, kk
             Compute(computeRound);	// b, ab, sw, sab, vk, x, s_ref
 
             // CopyInMatmulVK(computeRound); 	// vk = v @ a
-			// CopyInMultiplyB(computeRound); 	// b = a * kk
-			// ProcessMatmulVK(computeRound);
-			// ProcessMultiplyB(computeRound);
+            // CopyInMultiplyB(computeRound); 	// b = a * kk
+            // ProcessMatmulVK(computeRound);
+            // ProcessMultiplyB(computeRound);
 
-			// CopyInMultiplySW(computeRound); // sw = s * w
-			// CopyInMatmulSAB(computeRound); 	// sab = s @ ab
-			// ProcessMultiplySW(computeRound);
-			// ProcessMultiplySAB(computeRound);
+            // CopyInMultiplySW(computeRound); // sw = s * w
+            // CopyInMatmulSAB(computeRound); 	// sab = s @ ab
+            // ProcessMultiplySW(computeRound);
+            // ProcessMultiplySAB(computeRound);
 
-			// CopyInAddS(computeRound);		// s = sw + sab + vk
-			// ProcessAddS(computeRound);
+            // CopyInAddS(computeRound);		// s = sw + sab + vk
+            // ProcessAddS(computeRound);
 
-			// CopyInMatmulX(computeRound);	// x = s @ r
-			// ProcessMatmulX(computeRound);
+            // CopyInMatmulX(computeRound);	// x = s @ r
+            // ProcessMatmulX(computeRound);
 
-			CopyOut(computeRound);	// s, w
+            CopyOut(computeRound);	// s, w
         }        
     }
 
 private:
-	// vk = v @ a
-	__aicore__ inline void CopyInMatmulVK(uint32_t progress) {}
-	__aicore__ inline void ProcessMatmulVK(uint32_t progress)
-	{
-		// Matmul 对象初始化
-		REGIST_MATMUL_OBJ(&tPipeObj, GetSysWorkSpacePtr(), matmulObjVK, &tCubeTilingData);
+    // vk = v @ a
+    // __aicore__ inline void CopyInMatmulVK(uint32_t progress) {}
+    // __aicore__ inline void ProcessMatmulVK(uint32_t progress)
+    // {
+    // 	// Matmul 对象初始化
+    // 	REGIST_MATMUL_OBJ(&tPipeObj, GetSysWorkSpacePtr(), matmulObjVK, &tCubeTilingData);
 
-		// 设置Matmul的输入（包括左矩阵、右矩阵、bias）
-		matmulObjVK.SetWorkspace(workspaceGM)
-		matmulObjVK.Init(&tCubeTilingData);
-		matmulObjVK.SetTensorV(vGM);
-		matmulObjVK.SetTensorK(kGM);
-		
-		// 调用matmul iterate获取一块[baseM, baseN]的计算结果
-		while (matmulObj.template Iterate<true>())
-		{
-			MatmulCompute();
-			CopyOut(computeRound);
-			computeRound++;
-		}
+    // 	// 设置Matmul的输入（包括左矩阵、右矩阵、bias）
+    // 	matmulObjVK.SetWorkspace(workspaceGM)
+    // 	matmulObjVK.Init(&tCubeTilingData);
+    // 	matmulObjVK.SetTensorV(vGM);
+    // 	matmulObjVK.SetTensorK(kGM);
+        
+    // 	// 调用matmul iterate获取一块[baseM, baseN]的计算结果
+    // 	while (matmulObj.template Iterate<true>())
+    // 	{
+    // 		MatmulCompute();
+    // 		CopyOut(computeRound);
+    // 		computeRound++;
+    // 	}
 
-		matmulObj.End(); // v @ k
-	}
+    // 	matmulObj.End(); // v @ k
+    // }
 
-	// b = a * kk
-	__aicore__ inline void CopyInMultiplyB(uint32_t progress)
-	{
-		// 从Queue中分配输入Tensor
-		AscendC::LocalTensor<DTYPE_A> aLocal = inQueueA.AllocTensor<DTYPE_A>();
-		AscendC::LocalTensor<DTYPE_KK> kklocal = inQueueKK.AllocTensor<DTYPE_KK>();
+    // // b = a * kk
+    // __aicore__ inline void CopyInMultiplyB(uint32_t progress)
+    // {
+    // 	// 从Queue中分配输入Tensor
+    // 	AscendC::LocalTensor<float> aLocal = inQueueA.AllocTensor<float>();
+    // 	AscendC::LocalTensor<float> kklocal = inQueueKK.AllocTensor<float>();
 
-		// 将GlobalTensor数据拷贝到LocalTensor
-		AscendC::DataCopy(aLocal, aGm[progress * this->tileLength], this->tileLength);
-		AscendC::DataCopy(kklocal, kkGM[progress * this->tileLength], this->tileLength);
-		
-		// 将LocalTesor放入VECIN（代表矢量编程中搬入数据的逻辑存放位置）的Queue中
-		inQueueA.EnQue(aLocal);
-		inQueueKK.EnQue(kklocal);
-	}
+    // 	// 将GlobalTensor数据拷贝到LocalTensor
+    // 	AscendC::DataCopy(aLocal, aGm[progress * this->tileLength], this->tileLength);
+    // 	AscendC::DataCopy(kklocal, kkGM[progress * this->tileLength], this->tileLength);
+        
+    // 	// 将LocalTesor放入VECIN（代表矢量编程中搬入数据的逻辑存放位置）的Queue中
+    // 	inQueueA.EnQue(aLocal);
+    // 	inQueueKK.EnQue(kklocal);
+    // }
 
-	// TODO: 完成处理函数定义
-	__aicore__ inline void ProcessMultiplyB(uint32_t progress) {}
-	__aicore__ inline void CopyInMultiplySW(uint32_t progress) {}
-	__aicore__ inline void ProcessMultiplySW(uint32_t progress) {}
-	__aicore__ inline void CopyInMatmulSAB(uint32_t progress) {}
-	__aicore__ inline void ProcessMultiplySAB(uint32_t progress) {}
-	__aicore__ inline void CopyInAddS(uint32_t progress) {}
-	__aicore__ inline void ProcessAddS(uint32_t progress) {}
-	__aicore__ inline void CopyInMatmulX(uint32_t progress) {}
-	__aicore__ inline void ProcessMatmulX(uint32_t progress) {}
+    // // TODO: 完成处理函数定义
+    // __aicore__ inline void ProcessMultiplyB(uint32_t progress) {}
+    // __aicore__ inline void CopyInMultiplySW(uint32_t progress) {}
+    // __aicore__ inline void ProcessMultiplySW(uint32_t progress) {}
+    // __aicore__ inline void CopyInMatmulSAB(uint32_t progress) {}
+    // __aicore__ inline void ProcessMultiplySAB(uint32_t progress) {}
+    // __aicore__ inline void CopyInAddS(uint32_t progress) {}
+    // __aicore__ inline void ProcessAddS(uint32_t progress) {}
+    // __aicore__ inline void CopyInMatmulX(uint32_t progress) {}
+    // __aicore__ inline void ProcessMatmulX(uint32_t progress) {}
 
     __aicore__ inline void CopyIn(int32_t progress)
     {
-        AscendC::LocalTensor<DTYPE_S> sLocal = inQueueS.AllocTensor<DTYPE_S>();
-        AscendC::LocalTensor<DTYPE_R> rLocal = inQueueR.AllocTensor<DTYPE_R>();
-        AscendC::LocalTensor<DTYPE_W> wLocal = inQueueW.AllocTensor<DTYPE_W>();
-        AscendC::LocalTensor<DTYPE_K> kLocal = inQueueK.AllocTensor<DTYPE_K>();
-        AscendC::LocalTensor<DTYPE_V> vLocal = inQueueV.AllocTensor<DTYPE_V>();
-        AscendC::LocalTensor<DTYPE_A> aLocal = inQueueA.AllocTensor<DTYPE_A>();
-        AscendC::LocalTensor<DTYPE_KK> kkLocal = inQueueKK.AllocTensor<DTYPE_KK>();
+        AscendC::LocalTensor<float> sLocal = inQueueS.AllocTensor<float>();
+        AscendC::LocalTensor<float> rLocal = inQueueR.AllocTensor<float>();
+        AscendC::LocalTensor<float> wLocal = inQueueW.AllocTensor<float>();
+        AscendC::LocalTensor<float> kLocal = inQueueK.AllocTensor<float>();
+        AscendC::LocalTensor<float> vLocal = inQueueV.AllocTensor<float>();
+        AscendC::LocalTensor<float> aLocal = inQueueA.AllocTensor<float>();
+        AscendC::LocalTensor<float> kkLocal = inQueueKK.AllocTensor<float>();
 
         AscendC::DataCopy(sLocal, sGm[progress * TILE_LENGTH], TILE_LENGTH);
         AscendC::DataCopy(rLocal, rGm[progress * TILE_LENGTH], TILE_LENGTH);
@@ -255,22 +258,22 @@ private:
 
     __aicore__ inline void Compute(int32_t progress)
     {
-        AscendC::LocalTensor<DTYPE_S> sLocal = inQueueS.DeQue<DTYPE_S>();
-        AscendC::LocalTensor<DTYPE_R> rLocal = inQueueR.DeQue<DTYPE_R>();
-        AscendC::LocalTensor<DTYPE_W> wLocal = inQueueW.DeQue<DTYPE_W>();
-        AscendC::LocalTensor<DTYPE_K> kLocal = inQueueK.DeQue<DTYPE_K>();
-        AscendC::LocalTensor<DTYPE_V> vLocal = inQueueV.DeQue<DTYPE_V>();
-        AscendC::LocalTensor<DTYPE_A> aLocal = inQueueA.DeQue<DTYPE_A>();
-        AscendC::LocalTensor<DTYPE_KK> kkLocal = inQueueKK.DeQue<DTYPE_KK>();
+        AscendC::LocalTensor<float> sLocal = inQueueS.DeQue<float>();
+        AscendC::LocalTensor<float> rLocal = inQueueR.DeQue<float>();
+        AscendC::LocalTensor<float> wLocal = inQueueW.DeQue<float>();
+        AscendC::LocalTensor<float> kLocal = inQueueK.DeQue<float>();
+        AscendC::LocalTensor<float> vLocal = inQueueV.DeQue<float>();
+        AscendC::LocalTensor<float> aLocal = inQueueA.DeQue<float>();
+        AscendC::LocalTensor<float> kkLocal = inQueueKK.DeQue<float>();
 
-        AscendC::LocalTensor<DTYPE_A> bLocal = inQueueB.AllocTensor<DTYPE_A>();
-        AscendC::LocalTensor<DTYPE_A> abLocal = inQueueAB.AllocTensor<DTYPE_A>();
-        AscendC::LocalTensor<DTYPE_S> swLocal = inQueueSW.AllocTensor<DTYPE_S>();
-        AscendC::LocalTensor<DTYPE_S> sabLocal = inQueueSAB.AllocTensor<DTYPE_S>();
-        AscendC::LocalTensor<DTYPE_V> vkLocal = inQueueVK.AllocTensor<DTYPE_V>();
+        AscendC::LocalTensor<float> bLocal = inQueueB.AllocTensor<float>();
+        AscendC::LocalTensor<float> abLocal = inQueueAB.AllocTensor<float>();
+        AscendC::LocalTensor<float> swLocal = inQueueSW.AllocTensor<float>();
+        AscendC::LocalTensor<float> sabLocal = inQueueSAB.AllocTensor<float>();
+        AscendC::LocalTensor<float> vkLocal = inQueueVK.AllocTensor<float>();
 
-        AscendC::LocalTensor<DTYPE_X> xLocal = outQueueX.AllocTensor<DTYPE_X>();
-        AscendC::LocalTensor<DTYPE_S> sRefLocal = outQueueS.AllocTensor<DTYPE_S>();
+        AscendC::LocalTensor<float> xLocal = outQueueX.AllocTensor<float>();
+        AscendC::LocalTensor<float> sRefLocal = outQueueS.AllocTensor<float>();
 
         inQueueB.EnQue(bLocal);
         inQueueAB.EnQue(abLocal);
@@ -286,8 +289,8 @@ private:
         AscendC::Add(swLocal, sabLocal, xLocal, TILE_LENGTH);
         AscendC::Add(xLocal, vkLocal, sRefLocal, TILE_LENGTH);
 
-        outQueueX.EnQue<DTYPE_X>(xLocal);
-        outQueueS.EnQue<DTYPE_S>(sRefLocal);
+        outQueueX.EnQue<float>(xLocal);
+        outQueueS.EnQue<float>(sRefLocal);
 
         inQueueS.FreeTensor(sLocal);
         inQueueR.FreeTensor(rLocal);
@@ -303,13 +306,13 @@ private:
         inQueueSAB.FreeTensor(sabLocal);
         inQueueVK.FreeTensor(vkLocal);
     }
-	
+    
     // 搬出函数，完成CopyOut阶段的处理，被核心Process函数调用
     __aicore__ inline void CopyOut(int32_t progress)
     {
         // 从VecOut的Queue中取出输出Tensor
-        AscendC::LocalTensor<DTYPE_X> xLocal = outQueueX.DeQue<DTYPE_X>();
-        AscendC::LocalTensor<DTYPE_S> sLocal = outQueueS.DeQue<DTYPE_S>();
+        AscendC::LocalTensor<float> xLocal = outQueueX.DeQue<float>();
+        AscendC::LocalTensor<float> sLocal = outQueueS.DeQue<float>();
         // 将输出Tensor拷贝到GlobalTensor中
         AscendC::DataCopy(xGm[progress * this->tileLength], xLocal, this->tileLength);
         AscendC::DataCopy(sRefGm[progress * this->tileLength], sLocal, this->tileLength);
@@ -320,14 +323,14 @@ private:
 };
 
 
-extern "C" __global__ __aicore__ void wkv7_custom(GM_ADDR s, GM_ADDR r, GM_ADDR w, GM_ADDR k, GM_ADDR v, GM_ADDR a, GM_ADDR kk, GM_ADDR x, GM_ADDR s_ref) //, GM_ADDR workspace, GM_ADDR tiling)
+extern "C" __global__ __aicore__ void wkv7_custom(GM_ADDR s, GM_ADDR r, GM_ADDR w, GM_ADDR k, GM_ADDR v, GM_ADDR a, GM_ADDR kk, GM_ADDR x, GM_ADDR s_ref, GM_ADDR workspace, GM_ADDR tiling)
 {
     KernelWKV7 op;
-    op.Init(s, r, w, k, v, a, kk, x, s_ref, worksapce, tiling);
-    op.Process()
+    op.Init(s, r, w, k, v, a, kk, x, s_ref); //, worksapce, tiling);
+    op.Process();
 }
 
-#ifndef ASCEND_CPU_DEBUG
+#ifdef ASCEND_CPU_DEBUG
 // 核函数调用封装
 void wkv7_custom_do(uint32_t blockDim, void* l2ctrl, void* stream, uint8_t* s, uint8_t* r, uint8_t* w, uint8_t* k, uint8_t* v, uint8_t* a, uint8_t* kk, uint8_t* x, uint8_t* s_ref)
 {

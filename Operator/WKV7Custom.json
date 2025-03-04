@@ -94,23 +94,6 @@
                     "float32"
                 ]
             }
-        ],
-        "attr":[
-            {
-                "name": "B",
-                "type": "int",
-				"param_type":"required"
-            },
-            {
-                "name": "H",
-                "type": "int",
-				"param_type":"required"
-            },
-            {
-                "name": "S",
-                "type": "int",
-				"param_type":"required"
-            }
-		]
+        ]
     }
 ]

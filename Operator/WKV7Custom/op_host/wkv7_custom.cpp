@@ -97,9 +97,6 @@ public:
             .DataType({ge::DT_FLOAT})
             .Format({ge::FORMAT_ND})
             .UnknownShapeFormat({ge::FORMAT_ND});
-        this->Attr("B").Int();
-        this->Attr("H").Int();
-        this->Attr("S").Int();
 
         this->SetInferShape(ge::InferShape);
 
