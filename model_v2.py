@@ -47,7 +47,6 @@ class RWKV_BLOCK(nn.Module):
 
         # wkv算子初始化
         self.wkv_kernel = WKVKernelCustom()
-        self.wkv_kernel = mindspore.value_and_grad(self.wkv_kernel, grad_position=(0, 1), weights=self.wkv_kernel.trainable_params())
         
         # 初始化层归一化
         self.ln1 = nn.LayerNorm(n_embd)
@@ -158,8 +157,7 @@ class RWKV_BLOCK(nn.Module):
 
         # 使用注意力机制更新状态
         s = self.state_view_time_2.view(batch_size, H, S, S)
-        out, _ = self.wkv_kernel(k, v, w, r, -kk, kk * a, s)
-        x, s = out        
+        x, s = self.wkv_kernel(k, v, w, r, -kk, kk * a, s)
         self.state_view_time_2 = s
         
         r = r.view(batch_size, H, S, 1)
