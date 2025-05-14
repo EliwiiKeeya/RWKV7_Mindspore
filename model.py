@@ -17,16 +17,18 @@ class RWKV_BLOCK(nn.Module):
 
     Args:
         block_w (dict): 权重字典。
+        batch_size (int): 批大小。
         n_embd (int): 嵌入维度。
         n_head (int): 头数。
         state (mindspore.Tensor): 隐藏状态张量。[Batch_size, State_size, N_embd]。
         v_first: 第一层的值。
         i (int): 时间索引。
     """
-    def __init__(self, block_w: dict, n_embd: int, n_head: int, state: mindspore.Tensor, v_first: mindspore.Tensor, i: int):
+    def __init__(self, block_w: dict, batch_size: int, n_embd: int, n_head: int, state: mindspore.Tensor, v_first: mindspore.Tensor, i: int):
         super().__init__()
         self.layer_id = i
         self.head_size = 64
+        self.batch_size = batch_size
         self.n_embd = n_embd
         self.n_head = n_head
         
@@ -58,12 +60,12 @@ class RWKV_BLOCK(nn.Module):
         self.sigmoid = nn.Sigmoid()
         
         # 初始化注意力参数
-        self.x = nn.Parameter(ops.stack([block_w['att.x_r'],
-                                        block_w['att.x_w'],
-                                        block_w['att.x_k'],
-                                        block_w['att.x_v'],
-                                        block_w['att.x_a'],
-                                        block_w['att.x_g']]))
+        self.x_s = nn.Parameter(ops.stack([block_w['att.x_r'],
+                                           block_w['att.x_w'],
+                                           block_w['att.x_k'],
+                                           block_w['att.x_v'],
+                                           block_w['att.x_a'],
+                                           block_w['att.x_g']]))
         self.w0 = nn.Parameter(block_w['att.w0'])
         self.r_k = nn.Parameter(block_w['att.r_k'])
         self.w1 = nn.Parameter(block_w['att.w1'])
@@ -97,6 +99,10 @@ class RWKV_BLOCK(nn.Module):
         self.ffn_key.weight = nn.Parameter(block_w['ffn.key.weight'])
         self.ffn_value = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.ffn_value.weight = nn.Parameter(block_w['ffn.value.weight'])
+        
+        # 初始化变量      
+        self.x_ = ops.zeros([self.batch_size, 6, self.n_embd])
+        self.xr, self.xw, self.xk, self.xv, self.xa, self.xg = ops.unbind(self.x_, dim=1)
 
     def channel_mixing(self, x: mindspore.Tensor) -> mindspore.Tensor:
         """
@@ -124,28 +130,28 @@ class RWKV_BLOCK(nn.Module):
         Returns:
             mindspore.Tensor: 混合后的时间状态张量，形状与输入的state相同。
         """
-        batch_size, H, S = x.shape[0], self.n_head, self.head_size
+        batch_size, H, S = self.batch_size, self.n_head, self.head_size
 
-        sx = (self.state_view_time_1 - x)
-        self.state_view_time_1 = x
-
-        xr, xw, xk, xv, xa, xg = ops.unbind(x.unsqueeze(1) + sx.unsqueeze(1) * self.x, dim=1)
+        sx = self.state_view_time_1 - x
+        self.state_view_time_1[:] = x
+        
+        self.x_[:] = x.unsqueeze(1) + sx.unsqueeze(1) * self.x_s
 
         # 计算注意力机制的权重    
-        w = self.w0 + ops.tanh(xw @ self.w1) @ self.w2
+        w = self.w0 + ops.tanh(self.xw @ self.w1) @ self.w2
         w = ops.exp(-0.606531 * self.sigmoid(w)).view(batch_size, H, 1, S)
 
         # 计算注意力机制的组件
-        r = self.att_receptance(xr).view(batch_size, H, S, 1)
-        k = self.att_key(xk)
-        v = self.att_value(xv)
+        r = self.att_receptance(self.xr).view(batch_size, H, S, 1)
+        k = self.att_key(self.xk)
+        v = self.att_value(self.xv)
         if self.layer_id == 0:
             v_first = v.copy() # 存储第一层的v
         else:
-            v = v + (v_first - v) * ops.sigmoid(self.v0 + (xv @ self.v1) @ self.v2)
+            v = v + (v_first - v) * ops.sigmoid(self.v0 + (self.xv @ self.v1) @ self.v2)
         v = v.view(batch_size, H, S, 1)
-        a = self.sigmoid(self.a0 + (xa @ self.a1) @ self.a2)
-        g = self.sigmoid(xg @ self.g1) @ self.g2
+        a = self.sigmoid(self.a0 + (self.xa @ self.a1) @ self.a2)
+        g = self.sigmoid(self.xg @ self.g1) @ self.g2
 
         kk = k * self.k_k
         kk = nn.functional.normalize(kk.view(batch_size, H, S), dim=-1, p=2.0).view(batch_size, -1)
@@ -235,7 +241,7 @@ class RWKV_RNN(nn.Module):
         for i in range(self.num_layer):
             # 提取当前块的权重
             block_w = {k[len(f'blocks.{i}.'):]: v for k, v in w.items() if f'blocks.{i}.' in k}
-            self.blocks.append(RWKV_BLOCK(block_w, self.n_embd, self.n_head, self.state, self.v_first, i))
+            self.blocks.append(RWKV_BLOCK(block_w, self.batch_size, self.n_embd, self.n_head, self.state, self.v_first, i))
             print(f"Loading blocks...[{i + 1}/{self.num_layer}]", end='\r')
         print()
 
