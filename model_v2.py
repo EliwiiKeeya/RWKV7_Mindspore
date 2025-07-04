@@ -156,7 +156,7 @@ class RWKV_BLOCK(nn.Module):
         k = (k * (1 + (a-1) * self.k_a)).view(batch_size, H, 1, S)
 
         # 使用注意力机制更新状态
-        s = self.state_view_time_2.view(batch_size, H, S, S)
+        s = self.state_view_time_2.view(batch_size, H, S, S).contiguous()
         x, s = self.wkv_kernel(k, v, w, r, -kk, kk * a, s)
         self.state_view_time_2 = s
         
