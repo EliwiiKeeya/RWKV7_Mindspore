@@ -35,17 +35,20 @@ if __name__ == '__main__':
     TOP_P = 0.1  # Top-p采样参数
     LENGTH_PER_TRIAL = 50  # 生成的长度
 
+    # 初始化状态
+    state = mindspore.Tensor(ops.zeros([BATCH_SIZE, *model.state_size]), dtype=mindspore.float32)
+
     # 编码初始字符串
     token = mindspore.Tensor(tokenizer.encode(initial_string), dtype=mindspore.int64).expand([BATCH_SIZE, -1])
     for t in ops.unstack(token, axis=-1):
-        out = model(t)
+        out = model(t, state)
     else:
         token_sampled = sample_logits(out, TEMPERATURE, TOP_P).type_as(token)
         token = ops.cat((token, token_sampled.unsqueeze(1)), 1)
 
     start_time = time.time() # 开始计时
     for step in range(LENGTH_PER_TRIAL):  # 生成指定数量的token
-        out = model(token_sampled)
+        out = model(token_sampled, state)
         token_sampled = sample_logits(out, TEMPERATURE, TOP_P).type_as(token)
         token = ops.cat((token, token_sampled.unsqueeze(1)), 1)
         decoded_sequences = [tokenizer.decode(t) for t in token.tolist()]        

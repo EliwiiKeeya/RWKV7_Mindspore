@@ -19,30 +19,18 @@ class RWKV_BLOCK(nn.Module):
         block_w (dict): 权重字典。
         n_embd (int): 嵌入维度。
         n_head (int): 头数。
-        state (mindspore.Tensor): 隐藏状态张量。[Batch_size, State_size, N_embd]。
         v_first: 第一层的值。
         i (int): 时间索引。
     """
-    def __init__(self, block_w: dict, n_embd: int, n_head: int, state: mindspore.Tensor, v_first: mindspore.Tensor, i: int):
+    def __init__(self, block_w: dict, n_embd: int, n_head: int, v_first: mindspore.Tensor, i: int):
         super().__init__()
         self.layer_id = i
         self.head_size = 64
         self.n_embd = n_embd
         self.n_head = n_head
-        
-        # 时间状态索引
-        i0 = (2 + self.head_size) * i + 0
-        i1 = (2 + self.head_size) * i + 1
-        i2 = (2 + self.head_size) * i + 2
-        i3 = (2 + self.head_size) * (i + 1)
 
         # 初始化第一层的值
         self.v_first = v_first
-
-        # 初始化时间状态视图
-        self.state_view_channel = state[:, i0]
-        self.state_view_time_1 = state[:, i1]
-        self.state_view_time_2 = state[:, i2: i3, :]
         
         # 初始化层归一化
         self.ln1 = nn.LayerNorm(n_embd)
@@ -57,13 +45,14 @@ class RWKV_BLOCK(nn.Module):
         self.silu = nn.SiLU()
         self.sigmoid = nn.Sigmoid()
         
-        # 初始化注意力参数
-        self.x = nn.Parameter(ops.stack([block_w['att.x_r'],
-                                        block_w['att.x_w'],
-                                        block_w['att.x_k'],
-                                        block_w['att.x_v'],
-                                        block_w['att.x_a'],
-                                        block_w['att.x_g']]))
+        # 初始化注意力参数        
+        self.x_r = block_w['att.x_r']
+        self.x_w = block_w['att.x_w']
+        self.x_k = block_w['att.x_k']
+        self.x_v = block_w['att.x_v']
+        self.x_a = block_w['att.x_a']
+        self.x_g = block_w['att.x_g']
+
         self.w0 = nn.Parameter(block_w['att.w0'])
         self.r_k = nn.Parameter(block_w['att.r_k'])
         self.w1 = nn.Parameter(block_w['att.w1'])
@@ -92,44 +81,68 @@ class RWKV_BLOCK(nn.Module):
         self.att_group_norm.bias = nn.Parameter(block_w['att.ln_x.bias'])
             
         # 初始化前馈参数
-        self.x_k = nn.Parameter(block_w['ffn.x_k'])
+        self.ffn_x_k = nn.Parameter(block_w['ffn.x_k'])
         self.ffn_key = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.ffn_key.weight = nn.Parameter(block_w['ffn.key.weight'])
         self.ffn_value = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.ffn_value.weight = nn.Parameter(block_w['ffn.value.weight'])
 
-    def channel_mixing(self, x: mindspore.Tensor) -> mindspore.Tensor:
+    def channel_mixing(
+            self,
+            x: mindspore.Tensor,
+            state: mindspore.Tensor,
+            i: int
+        ) -> mindspore.Tensor:
         """
         通道混合函数。
-
         Args:
-            x (mindspore.Tensor): 输入张量，形状为[Batch, N_embd]。
+            x (mindspore.Tensor): 输入张量, 形状为[Batch, N_embd].
+            state (mindspore.Tensor): 时间状态张量，形状为[Batch, State Size, 2048].
+            i (int): 时间索引.
         Returns:
-            mindspore.Tensor: 混合后的张量，形状与输入的x相同。
+            mindspore.Tensor: 混合后的张量, 形状与输入的x相同。
         """
-        sx = self.state_view_channel - x
-        self.state_view_channel = x
-        
-        xk = x + sx * self.x_k
+        i0 = (2 + self.head_size) * i + 0
+        sx = state[:, i0] - x
+        state[:, i0] = x
+
+        xk = x + sx * self.ffn_x_k
         k = self.relu(self.ffn_key(xk)).pow(2)
 
         return self.ffn_value(k)
 
-    def time_mixing(self, x: mindspore.Tensor, v_first: mindspore.Tensor) -> mindspore.Tensor:
+    def time_mixing(
+            self,
+            x: mindspore.Tensor,
+            v_first: mindspore.Tensor,
+            state: mindspore.Tensor,
+            i: int
+        ) -> mindspore.Tensor:
         """
         时间混合函数。
-
         Args:
-            x (mindspore.Tensor): 输入张量，形状为[Batch, N_embd]。
+            x (mindspore.Tensor): 输入张量，形状为[Batch, N_embd].
+            v_first: 第一层的值.
+            state (mindspore.Tensor): 时间状态张量，形状为[Batch, State Size, 2048].
+            i (int): 时间索引.
         Returns:
-            mindspore.Tensor: 混合后的时间状态张量，形状与输入的state相同。
+            mindspore.Tensor: 混合后的时间状态张量, 形状与输入的state相同.
         """
         batch_size, H, S = x.shape[0], self.n_head, self.head_size
 
-        sx = (self.state_view_time_1 - x)
-        self.state_view_time_1 = x
+        # print(f"Layer {self.layer_id}, state_view_time_1 mean: {state[:, (2 + self.head_size) * i + 1].mean()}, state_view_time_2 mean: {state[:, (2+self.head_size)*i+2: (2+self.head_size)*(i+1), :].mean()}")
 
-        xr, xw, xk, xv, xa, xg = ops.unbind(x.unsqueeze(1) + sx.unsqueeze(1) * self.x, dim=1)
+        i1 = (2 + self.head_size) * i + 1
+        
+        sx = state[:, i1] - x
+        state[:, i1] = x
+        
+        xr = x + sx * self.x_r
+        xw = x + sx * self.x_w
+        xk = x + sx * self.x_k
+        xv = x + sx * self.x_v
+        xa = x + sx * self.x_a
+        xg = x + sx * self.x_g
 
         # 计算注意力机制的权重    
         w = self.w0 + ops.tanh(xw @ self.w1) @ self.w2
@@ -153,10 +166,10 @@ class RWKV_BLOCK(nn.Module):
 
         # 使用注意力机制更新状态
         vk = v @ k
-        ab = (-kk).view(batch_size, H, S, 1) @ (kk * a).view(batch_size, H, 1, S)
-        s = self.state_view_time_2.view(batch_size, H, S, S)
+        ab = (-kk).view(batch_size, H, S, 1) @ (kk * a).view(batch_size, H, 1, S)        
+        s = state[:, (2+self.head_size)*i+2: (2+self.head_size)*(i+1), :].view(batch_size, H, S, S)
         s = s * w + s @ ab.float() + vk.float()
-        self.state_view_time_2 = s.view(batch_size, S, -1)
+        state[:, (2+self.head_size)*i+2: (2+self.head_size)*(i+1), :] = s.view(batch_size, S, -1)
         x = s @ r
 
         # 展平x并应用组归一化和门控
@@ -167,17 +180,25 @@ class RWKV_BLOCK(nn.Module):
         # 应用输出层并返回结果
         return self.att_output(x), v_first
 
-    def forward(self, x: mindspore.Tensor, v_first: mindspore.Tensor) -> mindspore.Tensor:
+    def forward(
+            self, x: mindspore.Tensor,
+            v_first: mindspore.Tensor,
+            state: mindspore.Tensor,
+            i: int
+        ) -> mindspore.Tensor:
         """
         模型的前向传播。
         Args:
-            x (mindspore.Tensor): 输入张量，形状为[Batch, N_embd]。
+            x (mindspore.Tensor): 输入张量，形状为[Batch, N_embd].
+            v_first (mindspore.Tensor): 第一层的值。
+            state (mindspore.Tensor): 时间状态张量，形状为[Batch, State Size, N_embd].
+            i (int): 时间索引.
         Returns:
-            mindspore.Tensor: 前向传播结果张量，形状与输入的x相同。
+            mindspore.Tensor: 前向传播结果张量, 形状与输入的x相同.
         """
-        xx, v_first = self.time_mixing(self.ln1(x), v_first)
+        xx, v_first = self.time_mixing(self.ln1(x), v_first, state, i)        
         x = x + xx
-        x = x + self.channel_mixing(self.ln2(x))
+        x = x + self.channel_mixing(self.ln2(x), state, i)        
         return x, v_first
         
 
@@ -229,13 +250,12 @@ class RWKV_RNN(nn.Module):
         self.blocks = nn.ModuleList()
 
         # 初始化参数
-        self.state = ops.zeros([self.batch_size, *self.state_size])
         self.v_first = ops.zeros([self.batch_size, self.n_embd])
         
         for i in range(self.num_layer):
             # 提取当前块的权重
             block_w = {k[len(f'blocks.{i}.'):]: v for k, v in w.items() if f'blocks.{i}.' in k}
-            self.blocks.append(RWKV_BLOCK(block_w, self.n_embd, self.n_head, self.state, self.v_first, i))
+            self.blocks.append(RWKV_BLOCK(block_w, self.n_embd, self.n_head, self.v_first, i))
             print(f"Loading blocks...[{i + 1}/{self.num_layer}]", end='\r')
         print()
 
@@ -245,18 +265,23 @@ class RWKV_RNN(nn.Module):
         self.head = nn.Linear(self.n_embd, args['vocab_size'], bias=False)
         self.head.weight = nn.Parameter(w['head.weight'])
 
-    def forward(self, token: mindspore.Tensor) -> Tuple[mindspore.Tensor, mindspore.Tensor]:
+    def forward(
+            self,
+            token: mindspore.Tensor,
+            state: mindspore.Tensor
+        ) -> Tuple[mindspore.Tensor, mindspore.Tensor]:
         """
         模型的前向传播。
         Args:
             token (mindspore.Tensor): 输入的令牌张量。[Batch_size]
+            state (mindspore.Tensor): 隐藏状态张量。[Batch_size, State_size, N_embd]。
         Returns:
             mindspore.Tensor: 模型输出。
         """
         x = self.emb(token)
         x = self.ln0(x)
-        for block in self.blocks:
-            x, self.v_first = block(x, self.v_first)
+        for i, block in enumerate(self.blocks):
+            x, self.v_first = block(x, self.v_first, state, i)
         x = self.ln_out(x)
         x = self.head(x)
         return x
