@@ -117,7 +117,7 @@ class RWKV_BLOCK(nn.Module):
             v_first: mindspore.Tensor,
             state: mindspore.Tensor,
             i: int
-        ) -> mindspore.Tensor:
+        ) -> tuple[mindspore.Tensor, mindspore.Tensor]:
         """
         时间混合函数。
         Args:
@@ -126,7 +126,8 @@ class RWKV_BLOCK(nn.Module):
             state (mindspore.Tensor): 时间状态张量，形状为[Batch, State Size, 2048].
             i (int): 时间索引.
         Returns:
-            mindspore.Tensor: 混合后的时间状态张量, 形状与输入的state相同.
+            x (mindspore.Tensor): 混合后的时间状态张量, 形状与输入的x相同.
+            v_first (mindspore.Tensor): 第一层的值.
         """
         batch_size, H, S = x.shape[0], self.n_head, self.head_size
 
@@ -185,7 +186,7 @@ class RWKV_BLOCK(nn.Module):
             v_first: mindspore.Tensor,
             state: mindspore.Tensor,
             i: int
-        ) -> mindspore.Tensor:
+        ) -> tuple[mindspore.Tensor, mindspore.Tensor]:
         """
         模型的前向传播。
         Args:
@@ -194,7 +195,8 @@ class RWKV_BLOCK(nn.Module):
             state (mindspore.Tensor): 时间状态张量，形状为[Batch, State Size, N_embd].
             i (int): 时间索引.
         Returns:
-            mindspore.Tensor: 前向传播结果张量, 形状与输入的x相同.
+            x (mindspore.Tensor): 模型输出张量，形状与输入的x相同.
+            v_first (mindspore.Tensor): 第一层的值.
         """
         xx, v_first = self.time_mixing(self.ln1(x), v_first, state, i)        
         x = x + xx
