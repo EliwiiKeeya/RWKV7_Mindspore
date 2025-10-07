@@ -105,6 +105,10 @@ class RWKV_BLOCK(nn.Module):
         self.ffn_key.weight = nn.Parameter(block_w['ffn.key.weight'])
         self.ffn_value = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.ffn_value.weight = nn.Parameter(block_w['ffn.value.weight'])
+        
+        # 初始化变量      
+        self.xx = ops.zeros([self.batch_size, 6, self.n_embd])
+        self.xr, self.xw, self.xk, self.xv, self.xa, self.xg = ops.unbind(self.xx, dim=1)
 
     def channel_mixing(self, x: mindspore.Tensor) -> mindspore.Tensor:
         """
@@ -141,24 +145,24 @@ class RWKV_BLOCK(nn.Module):
 
         sx = self.state_view_time_1 - x
         self.state_view_time_1[:] = x
-
-        xr, xw, xk, xv, xa, xg = ops.unbind(x.unsqueeze(1) + sx.unsqueeze(1) * self.att_x, dim=1)
+        
+        self.xx[:] = x.unsqueeze(1) + sx.unsqueeze(1) * self.att_x
 
         # 计算注意力机制的权重
-        w = self.w0 + ops.tanh(xw @ self.w1) @ self.w2
+        w = self.w0 + ops.tanh(self.xw @ self.w1) @ self.w2
         w = (-0.606531 * self.sigmoid(w)).view(batch_size, H, 1, S)
 
         # 计算注意力机制的组件
-        r = self.att_receptance(xr).view(batch_size, H, 1, S)
-        k = self.att_key(xk)
-        v = self.att_value(xv)
+        r = self.att_receptance(self.xr).view(batch_size, H, 1, S)
+        k = self.att_key(self.xk)
+        v = self.att_value(self.xv)
         if self.layer_id == 0:
             v_first = v.copy() # 存储第一层的v
         else:
-            v = v + (v_first - v) * ops.sigmoid(self.v0 + (xv @ self.v1) @ self.v2)
+            v = v + (v_first - v) * ops.sigmoid(self.v0 + (self.xv @ self.v1) @ self.v2)
         v = v.view(batch_size, H, 1, S)
-        a = self.sigmoid(self.a0 + (xa @ self.a1) @ self.a2)
-        g = self.sigmoid(xg @ self.g1) @ self.g2
+        a = self.sigmoid(self.a0 + (self.xa @ self.a1) @ self.a2)
+        g = self.sigmoid(self.xg @ self.g1) @ self.g2
 
         kk = k * self.k_k
         kk = nn.functional.normalize(kk.view(batch_size, H, S), dim=-1, p=2.0).view(batch_size, -1)
