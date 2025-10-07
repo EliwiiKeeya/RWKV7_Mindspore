@@ -106,9 +106,24 @@ class RWKV_BLOCK(nn.Module):
         self.ffn_value = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.ffn_value.weight = nn.Parameter(block_w['ffn.value.weight'])
         
-        # 初始化变量      
+        # 初始化变量
         self.xx = ops.zeros([self.batch_size, 6, self.n_embd])
         self.xr, self.xw, self.xk, self.xv, self.xa, self.xg = ops.unbind(self.xx, dim=1)
+        self.att_w = ops.zeros([self.batch_size, self.n_embd])
+        self.att_w_view = self.att_w.view(self.batch_size, self.n_head, 1, self.head_size)
+        self.att_r = ops.zeros([self.batch_size, self.n_embd])
+        self.att_r_view_1 = self.att_r.view(self.batch_size, self.n_head, 1, self.head_size)
+        self.att_r_view_2 = self.att_r.view(self.batch_size, self.n_head, self.head_size)
+        self.att_v = ops.zeros([self.batch_size, self.n_embd])
+        self.att_v_view_1 = self.att_v.view(self.batch_size, self.n_head, 1, self.head_size)
+        self.att_v_view_2 = self.att_v.view(self.batch_size, self.n_head, self.head_size)
+        self.att_k = ops.zeros([self.batch_size, self.n_embd])
+        self.att_k_view_1 = self.att_k.view(self.batch_size, self.n_head, 1, self.head_size)
+        self.att_k_view_2 = self.att_k.view(self.batch_size, self.n_head, self.head_size)
+        self.att_kk = ops.zeros([self.batch_size, self.n_embd])
+        self.att_kk_view = self.att_kk.view(self.batch_size, self.n_head, self.head_size)        
+        self.att_rkv = ops.zeros([self.batch_size, self.n_head, self.head_size])
+        self.att_rkv_view = self.att_rkv.view(self.batch_size, self.n_embd)
 
     def channel_mixing(self, x: mindspore.Tensor) -> mindspore.Tensor:
         """
@@ -120,7 +135,7 @@ class RWKV_BLOCK(nn.Module):
             mindspore.Tensor: 混合后的张量，形状与输入的x相同。
         """
         sx = self.state_view_channel - x
-        self.state_view_channel = x
+        self.state_view_channel[:] = x
         
         xk = x + sx * self.ffn_x_k
         k = self.relu(self.ffn_key(xk)).pow(2)
@@ -141,45 +156,45 @@ class RWKV_BLOCK(nn.Module):
             x (mindspore.Tensor): 混合后的时间状态张量, 形状与输入的state相同.
             v_first (mindspore.Tensor): 第一层的值.
         """
-        batch_size, H, S = self.batch_size, self.n_head, self.head_size
-
         sx = self.state_view_time_1 - x
         self.state_view_time_1[:] = x
         
         self.xx[:] = x.unsqueeze(1) + sx.unsqueeze(1) * self.att_x
 
         # 计算注意力机制的权重
-        w = self.w0 + ops.tanh(self.xw @ self.w1) @ self.w2
-        w = (-0.606531 * self.sigmoid(w)).view(batch_size, H, 1, S)
+        self.att_w[:] = self.w0 + ops.tanh(self.xw @ self.w1) @ self.w2
+        self.att_w[:] = (-0.606531 * self.sigmoid(self.att_w))
 
         # 计算注意力机制的组件
-        r = self.att_receptance(self.xr).view(batch_size, H, 1, S)
-        k = self.att_key(self.xk)
-        v = self.att_value(self.xv)
+        self.att_r[:] = self.att_receptance(self.xr)
+        self.att_k[:] = self.att_key(self.xk)
+        self.att_v[:] = self.att_value(self.xv)
         if self.layer_id == 0:
-            v_first = v.copy() # 存储第一层的v
+            v_first = self.att_v.copy() # 存储第一层的v
         else:
-            v = v + (v_first - v) * ops.sigmoid(self.v0 + (self.xv @ self.v1) @ self.v2)
-        v = v.view(batch_size, H, 1, S)
+            self.att_v[:] = self.att_v + (v_first - self.att_v) * ops.sigmoid(self.v0 + (self.xv @ self.v1) @ self.v2)
         a = self.sigmoid(self.a0 + (self.xa @ self.a1) @ self.a2)
         g = self.sigmoid(self.xg @ self.g1) @ self.g2
 
-        kk = k * self.k_k
-        kk = nn.functional.normalize(kk.view(batch_size, H, S), dim=-1, p=2.0).view(batch_size, -1)
-        k = (k * (1 + (a-1) * self.k_a)).view(batch_size, H, 1, S)
+        self.att_kk[:] = self.att_k * self.k_k
+        self.att_kk_view[:] = nn.functional.normalize(self.att_kk_view, dim=-1, p=2.0)
+        self.att_k[:] = (self.att_k * (1 + (a-1) * self.k_a))
 
         # 使用注意力机制更新状态
-        s = self.state_view_time_2
-        x, s = self.wkv_kernel(k, v, w, r, -kk, kk * a, s)        
-        self.state_view_time_2[:] = s
-        
-        r = r.view(batch_size, H, S, 1)
-        v = v.view(batch_size, H, S, 1)
+        x, self.state_view_time_2[:] = self.wkv_kernel(
+            self.att_k_view_1,
+            self.att_v_view_1,
+            self.att_w_view,
+            self.att_r_view_1,
+            -self.att_kk,
+            self.att_kk * a,
+            self.state_view_time_2
+        )
 
         # 展平x并应用组归一化和门控
         x = self.att_group_norm(x.flatten(start_dim=1))
-        rkv = (r.squeeze(-1) * k.squeeze(-2) * self.r_k).sum(dim=-1, keepdim=True) * v.squeeze(-1)
-        x = (x + rkv.view(batch_size, H * S)) * g
+        self.att_rkv[:] = (self.att_r_view_2 * self.att_k_view_2 * self.r_k).sum(dim=-1, keepdim=True) * self.att_v_view_2
+        x = (x + self.att_rkv_view) * g
 
         # 应用输出层并返回结果
         return self.att_output(x), v_first
