@@ -14,7 +14,18 @@ from kernel import WKVKernelCustom
 
 class RWKV_BLOCK(nn.Module):
     """
-    RWKV模型的块结构.
+    RWKV模型的块结构。
+
+    主要成员变量:
+        layer_id (int): 当前块的时间索引.
+        head_size (int): 每个头的维度.
+        batch_size (int): 批大小.
+        n_embd (int): 总嵌入维度.
+        n_head (int): 注意力头数.
+        其它参数见 __init__ 方法.
+
+    用途:
+        实现 RWKV 块的前向与混合逻辑.
     """
 
     def __init__(
