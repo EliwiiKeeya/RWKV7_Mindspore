@@ -112,8 +112,8 @@ class RWKV_BLOCK(nn.Module):
         self.k_k = nn.Parameter(block_w['att.k_k'])
         self.k_a = nn.Parameter(block_w['att.k_a'])
         self.att_receptance = nn.Linear(self.n_embd, self.n_embd, bias=False)
-        self.att_receptance.weight = \
-            nn.Parameter(block_w['att.receptance.weight'])
+        self.att_receptance.weight = nn.Parameter(
+            block_w['att.receptance.weight'])
         self.att_key = nn.Linear(self.n_embd, self.n_embd, bias=False)
         self.att_key.weight = nn.Parameter(block_w['att.key.weight'])
         self.att_value = nn.Linear(self.n_embd, self.n_embd, bias=False)
