@@ -1,70 +1,95 @@
 ﻿import numpy as np
 import json
-import torch
 import mindspore as ms
 import mindspore.nn
 from mindspore import ops
 
-from kernel import WKVKernelCustom
 
-
-class Pydantic(torch.nn.Module):
+class MatrixMethod(mindspore.nn.Cell):
     def __init__(self):
         super().__init__()
 
         # 预热
-        k = torch.zeros((1, 12, 1, 64), dtype=torch.float32)
-        v = torch.zeros((1, 12, 64, 1), dtype=torch.float32)
-        w = torch.zeros((1, 12, 1, 64), dtype=torch.float32)
-        r = torch.zeros((1, 12, 64, 1), dtype=torch.float32)
-        a = torch.zeros((1, 12, 64, 1), dtype=torch.float32)
-        b = torch.zeros((1, 12, 1, 64), dtype=torch.float32)
-        s = torch.zeros((1, 12, 64, 64), dtype=torch.float32)
-        self.forward(k, v, w, r, a, b, s)
+        k = ops.zeros((1, 12, 1, 64), ms.float32)
+        v = ops.zeros((1, 12, 64, 1), ms.float32)
+        w = ops.zeros((1, 12, 1, 64), ms.float32)
+        r = ops.zeros((1, 12, 64, 1), ms.float32)
+        a = ops.zeros((1, 12, 64, 1), ms.float32)
+        b = ops.zeros((1, 12, 1, 64), ms.float32)
+        s = ops.zeros((1, 12, 64, 64), ms.float32)
+        self.construct(k, v, w, r, a, b, s)
 
-    def forward(self, k, v, w, r, a, b, s):
+    def construct(self, k, v, w, r, a, b, s):
         """
-        k: (B, H, 1, S)
-        v: (B, H, S, 1)
-        w: (B, H, 1, S)
-        r: (B, H, S, 1)
-        a: (B, H, S, 1)
-        b: (B, H, 1, S)
+        k: (B, H, T, S)
+        v: (B, H, S, T)
+        w: (B, H, T, S)
+        r: (B, H, S, T)
+        a: (B, H, S, T)
+        b: (B, H, T, S)
         s: (B, H, S, S)
         """
         vk = v @ k
         ab = a @ b
-        s = s * torch.exp(w) + s @ ab + vk
+        s = s * ops.exp(w) + s @ ab + vk
         x = s @ r
         return x, s
 
 
-class Kernel(mindspore.nn.Cell):
+class NaiveMethod(mindspore.nn.Cell):
     def __init__(self):
         super().__init__()
-        self.wkv_kernel = WKVKernelCustom()
 
         # 预热
         k = ops.zeros((1, 12, 1, 64), ms.float32)
         v = ops.zeros((1, 12, 1, 64), ms.float32)
         w = ops.zeros((1, 12, 1, 64), ms.float32)
         r = ops.zeros((1, 12, 1, 64), ms.float32)
-        a = ops.zeros((1, 768), ms.float32)
-        b = ops.zeros((1, 768), ms.float32)
+        a = ops.zeros((1, 12, 1, 64), ms.float32)
+        b = ops.zeros((1, 12, 1, 64), ms.float32)
         s = ops.zeros((1, 12, 64, 64), ms.float32)
         self.construct(k, v, w, r, a, b, s)
 
     def construct(self, k, v, w, r, a, b, s):
         """
-        k: (B, H, 1, S)
-        v: (B, H, 1, S)
-        w: (B, H, 1, S)
-        r: (B, H, 1, S)
-        a: (B, E)
-        b: (B, E)
+        k: (B, H, T, S)
+        v: (B, H, T, S)
+        w: (B, H, T, S)
+        r: (B, H, T, S)
+        a: (B, H, T, S)
+        b: (B, H, T, S)
         s: (B, H, S, S)
         """
-        x, s = self.wkv_kernel(k, v, w, r, a, b, s)
+        B, H, T, S = k.shape
+        x = ops.zeros((B, H, T, S), ms.float32)
+        s = s.copy()
+        
+        for t in range(T):
+            for batch in range(B):
+                for h in range(H):                    
+                    s[batch, h, :, :] = s[batch, h, :, :] * ops.exp(w[batch, h, t, :]) \
+                        + (s[batch, h, :, :] @ a[batch, h, t, :]).unsqueeze(-1) * b[batch, h, t, None, :] \
+                        + v[batch, h, t, :, None] * k[batch, h, t, None, :]
+                    x[batch, h, t, :] = s[batch, h, :, :] @ r[batch, h, t, :]
+        
+        # for t in range(T):
+        #     for bi in range(B):
+        #         for hi in range(H):
+        #             r_t = r[bi, hi, t]
+        #             k_t = k[bi, hi, t]
+        #             v_t = v[bi, hi, t]
+        #             a_t = a[bi, hi, t]
+        #             b_t = b[bi, hi, t]
+        #             w_t = ops.exp(w[bi, hi, t])
+
+        #             sa = ops.sum((a_t[None, :] * s[bi, hi]), dim=1)
+
+        #             s[bi, hi] = (s[bi, hi] * w_t[None, :] + 
+        #                         k_t[None, :] * v_t[:, None] + 
+        #                         sa[:, None] * b_t[None, :])
+
+        #             y = ops.sum((s[bi, hi] * r_t[None, :]), dim=1)
+        #             s[bi, hi, t] = y
         return x, s
 
 
@@ -136,24 +161,24 @@ def benchmark_same_tensor(times=100, mode="normal"):
     b = make_data("b", (B, H, 1, S), mode)
     s = make_data("s", (B, H, S, S), mode)
 
-    k_pydantic = torch.tensor(k, dtype=torch.float32)
-    v_pydantic = torch.tensor(v, dtype=torch.float32)
-    w_pydantic = torch.tensor(w, dtype=torch.float32)
-    r_pydantic = torch.tensor(r, dtype=torch.float32)
-    a_pydantic = torch.tensor(a, dtype=torch.float32)
-    b_pydantic = torch.tensor(b, dtype=torch.float32)
-    s_pydantic = torch.tensor(s, dtype=torch.float32)
+    k_matrix = ms.tensor(k, dtype=ms.float32)
+    v_matrix = ms.tensor(v, dtype=ms.float32)
+    w_matrix = ms.tensor(w, dtype=ms.float32)
+    r_matrix = ms.tensor(r, dtype=ms.float32)
+    a_matrix = ms.tensor(a, dtype=ms.float32)
+    b_matrix = ms.tensor(b, dtype=ms.float32)
+    s_matrix = ms.tensor(s, dtype=ms.float32)
 
-    k_kernel = ms.tensor(k.reshape(B, H, 1, S), ms.float32)
-    v_kernel = ms.tensor(v.reshape(B, H, 1, S), ms.float32)
-    w_kernel = ms.tensor(w.reshape(B, H, 1, S), ms.float32)
-    r_kernel = ms.tensor(r.reshape(B, H, 1, S), ms.float32)
-    a_kernel = ms.tensor(a.reshape(B, E), ms.float32)
-    b_kernel = ms.tensor(b.reshape(B, E), ms.float32)
-    s_kernel = ms.tensor(s, ms.float32)
+    k_naive = ms.tensor(k.reshape(B, H, 1, S), ms.float32)
+    v_naive = ms.tensor(v.reshape(B, H, 1, S), ms.float32)
+    w_naive = ms.tensor(w.reshape(B, H, 1, S), ms.float32)
+    r_naive = ms.tensor(r.reshape(B, H, 1, S), ms.float32)
+    a_naive = ms.tensor(a.reshape(B, H, 1, S), ms.float32)
+    b_naive = ms.tensor(b.reshape(B, H, 1, S), ms.float32)
+    s_naive = ms.tensor(s, ms.float32)
 
-    pydantic = Pydantic()
-    kernel = Kernel()
+    matrix_method = MatrixMethod()
+    naive_method = NaiveMethod()
 
     cos_sim_x_list, cos_sim_s_list = [], []
     kl_div_x_list, kl_div_s_list = [], []
@@ -161,16 +186,19 @@ def benchmark_same_tensor(times=100, mode="normal"):
     max_abs_s_list, mean_abs_s_list, rel_err_s_list = [], [], []
 
     for _ in range(times):
-        
-        out1, state1 = pydantic(
-            k_pydantic, v_pydantic, w_pydantic, r_pydantic, a_pydantic, b_pydantic, s_pydantic
-        )
-        out2, state2 = kernel(
-            k_kernel, v_kernel, w_kernel, r_kernel, a_kernel, b_kernel, s_kernel
-        )
+        # print(f"trial {_+1}:")
 
-        out1_np = out1.detach().cpu().numpy() if hasattr(
-            out1, 'detach') else out1.asnumpy()
+        out1, state1 = matrix_method.construct(
+            k_matrix, v_matrix, w_matrix, r_matrix, a_matrix, b_matrix, s_matrix
+        )
+        out2, state2 = naive_method.construct(
+            k_naive, v_naive, w_naive, r_naive, a_naive, b_naive, s_naive
+        )
+        
+        # print(out1.sum(), out2.sum(), out1.sum() - out2.sum())
+        # print(state1.sum(), state2.sum(), state1.sum() - state2.sum())        
+
+        out1_np = out1.asnumpy()
         out2_np = out2.asnumpy() if hasattr(
             out2, 'asnumpy') else out2.detach().cpu().numpy()
         state1_np = state1.detach().cpu().numpy() if hasattr(
@@ -219,7 +247,7 @@ def benchmark_same_tensor(times=100, mode="normal"):
 
 
 if __name__ == "__main__":
-    times = 1000
+    times = 10
     modes = ["normal", "zeros", "ones"]
     results = {}
     for mode in modes:
@@ -230,5 +258,5 @@ if __name__ == "__main__":
             print(f"{k}: {v:.6f}")
         print("-" * 50)
 
-    with open("test_kernel_precision.json", "w") as f:
+    with open("test_naive_precision.json", "w") as f:
         json.dump(results, f, indent=4)

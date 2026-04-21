@@ -148,8 +148,8 @@ def benchmark_same_tensor(times=100, mode="normal"):
     v_kernel = ms.tensor(v.reshape(B, H, 1, S), ms.float32)
     w_kernel = ms.tensor(w.reshape(B, H, 1, S), ms.float32)
     r_kernel = ms.tensor(r.reshape(B, H, 1, S), ms.float32)
-    a_kernel = ms.tensor(a.reshape(B, E), ms.float32)
-    b_kernel = ms.tensor(b.reshape(B, E), ms.float32)
+    a_kernel = ms.tensor(a.reshape(B, H, 1, S), ms.float32)
+    b_kernel = ms.tensor(b.reshape(B, H, 1, S), ms.float32)
     s_kernel = ms.tensor(s, ms.float32)
 
     pydantic = Pydantic()

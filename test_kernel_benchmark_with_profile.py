@@ -1,7 +1,9 @@
-﻿import time
+﻿import os
+import time
 
 import mindspore as ms
 from mindspore import Tensor, ops, nn
+from mindspore._c_expression import _framework_profiler_step_start, _framework_profiler_step_end
 
 from kernel import WKVKernelCustom
 
@@ -66,7 +68,7 @@ class Kernel(nn.Cell):
         return x, s
 
 
-def pydantic_benchmark():
+def pydantic_benchmark_with_profile():
     batch_size = 2
     n_head = 12
     head_size = 64
@@ -90,14 +92,16 @@ def pydantic_benchmark():
     out1, state1 = pydantic.construct(k, v, w, r, a, b, s)
 
     time_start = time.time()
+    _framework_profiler_step_start()
     out1, state1 = pydantic.construct(k, v, w, r, a, b, s)
+    _framework_profiler_step_end()
     time_end = time.time()
 
     pydantic_time = time_end - time_start
     return pydantic_time
 
 
-def kernel_benchmark():
+def kernel_benchmark_with_profile():
     batch_size = 2
     n_head = 12
     head_size = 64
@@ -119,7 +123,9 @@ def kernel_benchmark():
     s = Tensor(ops.randn((B, H, S, S)), ms.float32)
 
     time_start = time.time()
+    _framework_profiler_step_start()
     out2, state2 = kernel.construct(k, v, w, r, a, b, s)
+    _framework_profiler_step_end()
     time_end = time.time()
 
     kernel_time = time_end - time_start
@@ -129,8 +135,9 @@ def kernel_benchmark():
 def benchmark_random_tensor(times=100):
     pydantic_times = []
     kernel_times = []
-    for _ in range(times):
-        pydantic_time, kernel_time = pydantic_benchmark(), kernel_benchmark()
+    for _ in range(times):       
+        pydantic_time = pydantic_benchmark_with_profile()
+        kernel_time = kernel_benchmark_with_profile()
         pydantic_times.append(pydantic_time)
         kernel_times.append(kernel_time)
     pydantic_time = sum(pydantic_times) / len(pydantic_times)
@@ -140,69 +147,28 @@ def benchmark_random_tensor(times=100):
 
     return pydantic_time, kernel_time
 
-def benchmark_same_tensor(times=100):
-    batch_size = 2
-    n_head = 12
-    head_size = 64
-    n_embd = n_head * head_size
 
-    B = batch_size
-    H = n_head
-    S = head_size
-    E = n_embd         # E = H * S
-
-    # Pydantic data
-    k = Tensor(ops.randn((B, H, 1, S)), ms.float32)
-    v = Tensor(ops.randn((B, H, S, 1)), ms.float32)
-    w = Tensor(ops.randn((B, H, 1, S)), ms.float32)
-    r = Tensor(ops.randn((B, H, S, 1)), ms.float32)
-    a = Tensor(ops.randn((B, H, S, 1)), ms.float32)
-    b = Tensor(ops.randn((B, H, 1, S)), ms.float32)
-    s = Tensor(ops.randn((B, H, S, S)), ms.float32)
-
-    # Kernel data
-    v_kernel = v.view(B, H, 1, S)
-    r_kernel = r.view(B, H, 1, S)
-    a_kernel = a.view(B, E)
-    b_kernel = b.view(B, E)
-
-    pydantic = Pydantic()
-    kernel = Kernel()
-
-    out1, state1 = pydantic.construct(k, v, w, r, a, b, s)
-    out2, state2 = kernel.construct(k, v, w, r, a, b, s)
-
+def benchmark_pydantic_only(times=100):
     pydantic_times = []
+    for _ in range(times):
+        pydantic_time = pydantic_benchmark_with_profile()
+        pydantic_times.append(pydantic_time)
+    avg_pydantic_time = sum(pydantic_times) / len(pydantic_times)
+    print(f"Pydantic only average time: {avg_pydantic_time}")
+    return avg_pydantic_time
+
+def benchmark_kernel_only(times=100):
     kernel_times = []
     for _ in range(times):
-        time_start = time.time()
-        out1, state1 = pydantic.construct(k, v, w, r, a, b, s)
-        time_end = time.time()
-        pydantic_times.append(time_end - time_start)
+        kernel_time = kernel_benchmark_with_profile()
+        kernel_times.append(kernel_time)
+    avg_kernel_time = sum(kernel_times) / len(kernel_times)
+    print(f"Kernel only average time: {avg_kernel_time}")
+    return avg_kernel_time
 
-        time_start = time.time()
-        out2, state2 = kernel.construct(k, v, w, r, a, b, s)
-        time_end = time.time()
-        kernel_times.append(time_end - time_start)
-
-    pydantic_time = sum(pydantic_times) / len(pydantic_times)
-    kernel_time = sum(kernel_times) / len(kernel_times)
-    print(f"Pydantic time: {pydantic_time}, Kernel time: {kernel_time}")
-    print(f"Speedup: {pydantic_time / kernel_time}x")
-
-    return pydantic_time, kernel_time
 
 if __name__ == "__main__":
+    os.environ['MS_ENABLE_RUNTIME_PROFILER'] = '1'
     times = 1000
     print("Benchmarking with random tensors:")
     benchmark_random_tensor(times=times)
-    print("Benchmarking with same tensors:")
-    benchmark_same_tensor(times=times)
-
-# 结果
-# Benchmarking with random tensors:
-# Pydantic time: 0.00027157044410705566, Kernel time: 0.00012213659286499024
-# Speedup: 2.223497788310253x
-# Benchmarking with same tensors:
-# Pydantic time: 0.0002385993003845215, Kernel time: 0.00010583853721618652
-# Speedup: 2.254370729795301x
